@@ -53,6 +53,7 @@ let activationRan = false;
 let translations: Record<string, { name?: string; content?: string }> = {};
 let theme = localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light';
 let mdRaw = false;   // 본문 보기: 렌더(기본) ↔ 원문
+let mobilePane: 'list' | 'reader' = 'list';   // 좁은 화면: 목록 ↔ 본문 한 화면씩(데스크탑은 CSS가 무시)
 // 진단 이슈 → 목록 경고 도트용(uid → 최고 심각도). lore 바뀔 때마다 재계산(selectChip).
 let issueSevByUid: Record<string, string> = {};
 function refreshIssueMap() {
@@ -218,6 +219,7 @@ async function selectChip(id: string) {
       selectedUid = realEntries()[0]?.uid || '';
       statusText = `${chip.name}에서 로어북을 읽었습니다.`;
       refreshIssueMap();
+      mobilePane = 'list';   // 새 파일 = 좁은 화면에선 목록부터
     }
   } catch (e) {
     console.warn('[lorebook] parse failed', e);
@@ -398,7 +400,7 @@ function buildSummary() {
 }
 function buildWorkspace() {
   const ws = document.createElement('section');
-  ws.className = 'workspace';
+  ws.className = 'workspace pane-' + mobilePane;   // 좁은 화면에서만 의미(둘 중 하나 숨김)
   ws.append(buildEntryList(), buildReader());
   return ws;
 }
@@ -439,7 +441,7 @@ function entryRow(e: any) {
     + (e.uid === selectedUid ? ' active' : '')
     + (e.constant ? ' constant' : '')
     + (!e.enabled ? ' off' : '');
-  row.onclick = () => { selectedUid = e.uid; readerTab = 'read'; renderBody(); };
+  row.onclick = () => { selectedUid = e.uid; readerTab = 'read'; mobilePane = 'reader'; renderBody(); };
   row.append(span('entry-title', displayName(e)));
   const meta = document.createElement('span');
   meta.className = 'entry-meta';
@@ -556,6 +558,9 @@ function buildReader() {
 function buildReaderTabs() {
   const tabs = document.createElement('div');
   tabs.className = 'reader-tabs';
+  const back = button('← 목록', () => { mobilePane = 'list'; renderBody(); }, 'ghost');
+  back.className = 'mob-back';   // 좁은 화면에서만 보임(CSS)
+  tabs.appendChild(back);
   const items: [ReaderTab, string][] = [['read', '읽기'], ['diagnose', '진단'], ['activate', '활성화 테스트'], ['export', '내보내기']];
   for (const [id, label] of items) {
     const b = button(label, () => { readerTab = id; renderBody(); });
@@ -870,11 +875,23 @@ function renderSettings() {
   const skipKorean = checkEl(prefs.skipKorean !== false);
   const combine = checkEl(getCombineOn());
 
+  // 기본 = 키만 넣으면 되는 층. 파라미터·배치·프리셋은 "고급" 접기로(과부하 방지).
   body.append(
     fieldRow(field('제공자', provider), field('모델', model, '비워두면 제공자 기본 모델을 씁니다.')),
     fieldRow(field('API 키', apiKey, '키는 브라우저 localStorage 또는 sessionStorage에만 저장됩니다.'), field('서버 주소', baseUrl, 'custom/OpenAI 호환 서버에만 필요합니다.')),
     fieldRow(field('번역 언어', targetLang), field('세션 저장', labelWrap(sessionOnly, '탭을 닫으면 키 삭제'))),
+    fieldRow(field('이름 번역', labelWrap(translateNames, '본문과 이름을 함께 번역')), field('한국어 스킵', labelWrap(skipKorean, '이미 한국어인 항목 건너뛰기'))),
   );
+
+  const adv = document.createElement('details');
+  adv.className = 'adv-fold';
+  const advSum = document.createElement('summary');
+  advSum.textContent = '고급 — 생성 파라미터 · 배치 · 프롬프트 프리셋';
+  adv.appendChild(advSum);
+  const advBody = document.createElement('div');
+  advBody.className = 'settings-body adv-body';
+  adv.appendChild(advBody);
+  body.appendChild(adv);
 
   const paramGrid = document.createElement('div');
   paramGrid.className = 'field-row';
@@ -888,15 +905,14 @@ function renderSettings() {
     field('max_tokens', maxTokens, '0이면 입력 길이에 따라 자동 산정합니다.'),
     field('top_k', topK, 'Anthropic에서 주로 사용합니다.'),
   );
-  body.appendChild(paramGrid);
+  advBody.appendChild(paramGrid);
 
   const thinking = selectEl([['off', 'off'], ['low', 'low'], ['medium', 'medium'], ['high', 'high']], cfg.thinking || 'off');
   const batchChars = numberEl(prefs.batchChars || 3600, '800', '20000', '100');
   const batchCount = numberEl(prefs.batchCount || 16, '1', '80', '1');
-  body.append(
+  advBody.append(
     fieldRow(field('Gemini thinking', thinking), field('배치 글자 수', batchChars)),
     fieldRow(field('배치 개수', batchCount), field('결합 번역', labelWrap(combine, '여러 블록을 한 번에 번역'))),
-    fieldRow(field('이름 번역', labelWrap(translateNames, '본문과 이름을 함께 번역')), field('한국어 스킵', labelWrap(skipKorean, '이미 한국어인 항목 건너뛰기'))),
   );
 
   const presetSelect = selectEl(presets.list.map((p) => [p.name, p.name]), presets.active);
@@ -933,7 +949,7 @@ function renderSettings() {
     settingsOpen = true;
     render();
   };
-  body.append(field('프롬프트 프리셋', presetSelect), field('프롬프트', prompt, '키워드와 발동 조건은 번역하지 않는다는 지침을 유지하세요.'), field('maxResponse', maxResponse, '프리셋별 응답 예산입니다. 0이면 자동입니다.'), presetBtns);
+  advBody.append(field('프롬프트 프리셋', presetSelect), field('프롬프트', prompt, '키워드와 발동 조건은 번역하지 않는다는 지침을 유지하세요.'), field('maxResponse', maxResponse, '프리셋별 응답 예산입니다. 0이면 자동입니다.'), presetBtns);
 
   function writePreset() {
     const p = presets.list.find((x) => x.name === presetSelect.value) || presets.list[0];

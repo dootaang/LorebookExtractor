@@ -487,19 +487,35 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent2); }
   inset: 0;
   z-index: 20;
   background: rgba(30, 20, 10, .45);
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;   /* 패널이 화면보다 길면 모달째 스크롤(모바일 상단 잘림 방지) */
   padding: 18px;
 }
 .settings-panel {
   width: min(720px, 96vw);
-  max-height: 92vh;
-  overflow-y: auto;
+  margin: 3vh 0 24px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 14px;
   box-shadow: 0 18px 60px rgba(0, 0, 0, .28);
 }
+/* 고급 접기 — 기본은 "키만 넣으면 되는" 층만 노출 */
+.adv-fold { border: 1px solid var(--line-soft); border-radius: 10px; background: var(--panel3); }
+.adv-fold > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 11px 14px;
+  font-weight: 700;
+  color: var(--dim);
+  user-select: none;
+}
+.adv-fold > summary::-webkit-details-marker { display: none; }
+.adv-fold > summary::before { content: '▸'; color: var(--accent); font-size: 11px; margin-right: 8px; display: inline-block; transition: transform .15s; }
+.adv-fold[open] > summary::before { transform: rotate(90deg); }
+.adv-fold[open] > summary { border-bottom: 1px solid var(--line-soft); color: var(--text); }
+.adv-body { padding: 14px; }
 .settings-head {
   display: flex;
   align-items: center;
@@ -533,11 +549,27 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent2); }
 
 .chips, .list-scroll, .reader-body, .settings-panel { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 
+.mob-back { display: none; }   /* 좁은 화면 전용(아래 미디어쿼리) */
 @media (max-width: 800px) {
   .topbar { padding: 8px 10px; }
   .brand span:last-child { display: none; }
   .main { padding: 9px 10px; }
-  .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(220px, 42vh) minmax(320px, 1fr); }
+  /* 좁은 화면 = 목록 ↔ 본문 한 화면씩 전환(.workspace.pane-*) + 리더 탭줄의 ← 목록 */
+  .workspace { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  .workspace.pane-reader .entry-list { display: none; }
+  .workspace.pane-list .reader { display: none; }
+  .mob-back {
+    display: inline-flex;
+    align-items: center;
+    border: 0;
+    border-right: 1px solid var(--line-soft);
+    border-radius: 0;
+    background: transparent;
+    padding: 11px 12px 9px;
+    color: var(--accent);
+    font-weight: 800;
+    white-space: nowrap;
+  }
   .reader-title h1 { font-size: 19px; }
   .reader-page { padding: 10px 8px 80px; }
   .reader-head { padding: 14px 16px 10px; }
