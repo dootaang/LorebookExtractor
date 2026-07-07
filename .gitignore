@@ -6,3 +6,6 @@ web/dist/
 *.log
 Thumbs.db
 .DS_Store
+
+# firebase 로컬 배포 캐시
+.firebase/
