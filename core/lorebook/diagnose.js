@@ -65,13 +65,13 @@ function diagnoseDecorators(entry) {
     const parts = line.trim().split(/\s+/);
     const name = parts[0];
     if (!KNOWN_DECORATORS.has(name)) {
-      out.push(issue('warning', 'unknown_decorator', `Unknown decorator: ${name}`, entry, line));
+      out.push(issue('warning', 'unknown_decorator', `모르는 데코레이터: ${name}`, entry, line));
       continue;
     }
     if (NUMERIC_DECORATORS.has(name)) {
       const value = parts[1];
       if (value == null || Number.isNaN(Number(value))) {
-        out.push(issue('warning', 'decorator_number', `${name} needs a number`, entry, line));
+        out.push(issue('warning', 'decorator_number', `${name}에 숫자가 필요함`, entry, line));
       }
     }
   }
@@ -87,20 +87,20 @@ function diagnoseLorebook(lore, opts = {}) {
   const longLimit = Number(opts.longEntryChars || 4000);
 
   for (const e of real) {
-    const name = e.name || (e.keys && e.keys[0]) || '(unnamed)';
+    const name = e.name || (e.keys && e.keys[0]) || '(이름 없음)';
     const keys = Array.isArray(e.keys) ? e.keys.filter(Boolean) : [];
 
-    if (e.enabled === false) issues.push(issue('info', 'disabled', 'Disabled entry', e, name));
-    if (!String(e.content || '').trim()) issues.push(issue('error', 'empty_content', 'Empty content', e, 'This entry will not add prompt text.'));
-    if (e.enabled !== false && !e.constant && !keys.length) issues.push(issue('warning', 'no_keys', 'Conditional entry has no keys', e, 'It cannot activate unless edited.'));
-    if (e.selective && (!Array.isArray(e.secondaryKeys) || !e.secondaryKeys.length)) issues.push(issue('warning', 'selective_without_secondary', 'Selective entry has no secondary keys', e, 'Primary key can match, but the second condition is missing.'));
-    if (e.folder && !refs.has(String(e.folder))) issues.push(issue('warning', 'orphan_folder', 'Folder reference was not found', e, String(e.folder)));
-    if (String(e.content || '').length > longLimit) issues.push(issue('info', 'long_entry', 'Long entry', e, `${String(e.content || '').length} chars, about ${estimateEntryTokens(e)} tokens.`));
+    if (e.enabled === false) issues.push(issue('info', 'disabled', '비활성 엔트리', e, name));
+    if (!String(e.content || '').trim()) issues.push(issue('error', 'empty_content', '본문이 비어 있음', e, '프롬프트에 아무것도 더하지 않는 엔트리예요.'));
+    if (e.enabled !== false && !e.constant && !keys.length) issues.push(issue('warning', 'no_keys', '조건부인데 발동 키워드가 없음', e, '수정하지 않으면 발동할 수 없어요.'));
+    if (e.selective && (!Array.isArray(e.secondaryKeys) || !e.secondaryKeys.length)) issues.push(issue('warning', 'selective_without_secondary', '2차 키 조건인데 2차 키워드가 없음', e, '1차 키가 맞아도 두 번째 조건이 비어 있어요.'));
+    if (e.folder && !refs.has(String(e.folder))) issues.push(issue('warning', 'orphan_folder', '폴더 참조를 찾지 못함', e, String(e.folder)));
+    if (String(e.content || '').length > longLimit) issues.push(issue('info', 'long_entry', '긴 엔트리', e, `${String(e.content || '').length}자 · 약 ${estimateEntryTokens(e)} 토큰.`));
 
     if (e.useRegex) {
       for (const key of keys) {
         try { new RegExp(key); }
-        catch (err) { issues.push(issue('error', 'invalid_regex', 'Invalid regex key', e, `${key}: ${err.message || err}`)); }
+        catch (err) { issues.push(issue('error', 'invalid_regex', '잘못된 정규식 키워드', e, `${key}: ${err.message || err}`)); }
       }
     }
 
@@ -109,7 +109,7 @@ function diagnoseLorebook(lore, opts = {}) {
       if (!norm) continue;
       if (!keyMap.has(norm)) keyMap.set(norm, []);
       keyMap.get(norm).push(e);
-      if (!e.useRegex && norm.length <= 1) issues.push(issue('warning', 'short_key', 'Very short key', e, key));
+      if (!e.useRegex && norm.length <= 1) issues.push(issue('warning', 'short_key', '너무 짧은 키워드', e, key));
     }
 
     issues.push(...diagnoseDecorators(e));
@@ -117,21 +117,21 @@ function diagnoseLorebook(lore, opts = {}) {
 
   for (const [key, owners] of keyMap.entries()) {
     if (owners.length > 1) {
-      for (const e of owners) issues.push(issue('warning', 'duplicate_key', `Duplicate key: ${key}`, e, `${owners.length} entries share this key.`));
+      for (const e of owners) issues.push(issue('warning', 'duplicate_key', `중복 키워드: ${key}`, e, `${owners.length}개 엔트리가 같은 키워드를 써요.`));
     }
   }
 
   const constantCount = real.filter((e) => e.enabled !== false && e.constant).length;
   if (real.length && constantCount >= Math.max(5, Math.ceil(real.length * 0.35))) {
-    issues.push(issue('warning', 'many_constant', 'Many always-active entries', null, `${constantCount}/${real.length} entries are always active.`));
+    issues.push(issue('warning', 'many_constant', '상시활성 엔트리가 많음', null, `${real.length}개 중 ${constantCount}개가 항상 포함돼요.`));
   }
 
   const tokenStats = estimateLorebookTokens(entries);
   const budget = Number(opts.tokenBudget != null ? opts.tokenBudget : lore && lore.tokenBudget);
   if (budget > 0 && tokenStats.constant > budget) {
-    issues.push(issue('error', 'constant_over_budget', 'Always-active entries exceed token budget', null, `${tokenStats.constant}/${budget} estimated tokens.`));
+    issues.push(issue('error', 'constant_over_budget', '상시활성만으로 토큰 예산 초과', null, `추정 ${tokenStats.constant} / 예산 ${budget} 토큰.`));
   } else if (budget > 0 && tokenStats.total > budget) {
-    issues.push(issue('info', 'total_over_budget', 'Full lorebook exceeds token budget', null, `${tokenStats.total}/${budget} estimated tokens.`));
+    issues.push(issue('info', 'total_over_budget', '로어북 전체가 토큰 예산 초과', null, `추정 ${tokenStats.total} / 예산 ${budget} 토큰.`));
   }
 
   const rank = { error: 0, warning: 1, info: 2 };

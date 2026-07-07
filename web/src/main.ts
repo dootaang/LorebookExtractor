@@ -67,6 +67,15 @@ function refreshIssueMap() {
   } catch (_) {}
 }
 const tinyTok = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n));
+// 브랜드 아이콘(build/icon.svg와 동일 도형): 크림 스쿼클 + 펼친 책 + 딥그린 서표 리본.
+const ICON = (s: number) => `<svg width="${s}" height="${s}" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">`
+  + '<defs><linearGradient id="lbg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f9f1e0"/><stop offset="1" stop-color="#ecdfc0"/></linearGradient></defs>'
+  + '<rect width="128" height="128" rx="28" fill="url(#lbg)" stroke="#dcc59a" stroke-width="3"/>'
+  + '<path d="M64 42 C55 34 42 31 30 33 L30 92 C42 90 55 92 64 99 Z" fill="#fffdf6" stroke="#33261a" stroke-width="4" stroke-linejoin="round"/>'
+  + '<path d="M64 42 C73 34 86 31 98 33 L98 92 C86 90 73 92 64 99 Z" fill="#fffdf6" stroke="#33261a" stroke-width="4" stroke-linejoin="round"/>'
+  + '<path d="M38 48 C46 46 52 47 57 50 M38 58 C46 56 52 57 57 60 M38 68 C46 66 52 67 57 70" stroke="#b8a078" stroke-width="3" fill="none" stroke-linecap="round"/>'
+  + '<path d="M71 50 C76 47 82 46 90 48 M71 60 C76 57 82 56 90 58" stroke="#b8a078" stroke-width="3" fill="none" stroke-linecap="round"/>'
+  + '<path d="M76 24 L90 24 L90 56 L83 48 L76 56 Z" fill="#255c46"/></svg>';
 
 let chipsEl: HTMLElement;
 let bodyEl: HTMLElement;
@@ -255,7 +264,7 @@ function render() {
   bar.className = 'topbar';
   const brand = document.createElement('div');
   brand.className = 'brand';
-  brand.innerHTML = '<span class="brand-mark">▣</span><span>로어북 추출기</span>';
+  brand.innerHTML = `<span class="brand-mark">${ICON(26)}</span><span>로어북 추출기</span>`;
   bar.appendChild(brand);
   chipsEl = document.createElement('div');
   chipsEl.className = 'chips';
@@ -315,14 +324,39 @@ function renderBody() {
   main.append(buildSummary(), buildWorkspace(), buildBottomActions());
   bodyEl.appendChild(main);
 }
+// 내장 샘플 즉시 로드 — 파일 없이도 도구를 바로 체험(첫 방문 전환용).
+async function loadSample() {
+  try {
+    const res = await fetch('sample-lorebook.json');
+    if (!res.ok) throw new Error(String(res.status));
+    const buf = await res.arrayBuffer();
+    addFiles([new File([buf], '샘플 로어북.json', { type: 'application/json' })]);
+  } catch (_) { toast('샘플을 불러오지 못했어요 — 네트워크를 확인하세요'); }
+}
 function buildEmpty() {
   const wrap = document.createElement('div');
   wrap.className = 'empty';
+  const col = document.createElement('div');
+  col.className = 'empty-col';
   const dz = document.createElement('div');
   dz.className = 'dropzone';
   dz.onclick = pickFiles;
-  dz.innerHTML = '<div class="drop-icon">▣</div><div class="drop-title">파일을 놓거나 클릭하세요</div><div class="drop-ext">.charx · .png · .json · .jpeg · .risum</div>';
-  wrap.appendChild(dz);
+  const steps = [
+    ['1', '리스에서 봇카드·모듈 내보내기'],
+    ['2', '여기에 놓거나 클릭'],
+    ['3', '읽고 · 번역하고 · 내보내기'],
+  ].map(([n, t]) => `<span class="drop-step"><b>${n}</b>${t}</span>`).join('');
+  dz.innerHTML = `<div class="drop-icon">${ICON(76)}</div>`
+    + '<div class="drop-title">봇카드 속 로어북을 꺼내 읽어보세요</div>'
+    + '<div class="drop-ext">.charx · .png · .json · .jpeg · .risum — 파일은 기기 밖으로 나가지 않아요</div>'
+    + `<div class="drop-steps">${steps}</div>`;
+  col.appendChild(dz);
+  const trial = document.createElement('div');
+  trial.className = 'empty-actions';
+  const sampleBtn = button('샘플 로어북 구경하기', loadSample, 'ghost');
+  trial.append(span('empty-hint', '처음이신가요?'), sampleBtn);
+  col.appendChild(trial);
+  wrap.appendChild(col);
   return wrap;
 }
 // 요약 = 통계(버튼처럼 안 보이게: 숫자 강조 + 라벨 흐림). 종류는 뱃지 하나만.

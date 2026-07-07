@@ -1,0 +1,10 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- 로어북 추출기 브랜드: 크림 스쿼클 + 펼친 책 + 딥그린 서표 리본(시그니처) -->
+  <defs><linearGradient id="lbg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f9f1e0"/><stop offset="1" stop-color="#ecdfc0"/></linearGradient></defs>
+  <rect width="128" height="128" rx="28" fill="url(#lbg)" stroke="#dcc59a" stroke-width="3"/>
+  <path d="M64 42 C55 34 42 31 30 33 L30 92 C42 90 55 92 64 99 Z" fill="#fffdf6" stroke="#33261a" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M64 42 C73 34 86 31 98 33 L98 92 C86 90 73 92 64 99 Z" fill="#fffdf6" stroke="#33261a" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M38 48 C46 46 52 47 57 50 M38 58 C46 56 52 57 57 60 M38 68 C46 66 52 67 57 70" stroke="#b8a078" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <path d="M71 50 C76 47 82 46 90 48 M71 60 C76 57 82 56 90 58" stroke="#b8a078" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <path d="M76 24 L90 24 L90 56 L83 48 L76 56 Z" fill="#255c46"/>
+</svg>
