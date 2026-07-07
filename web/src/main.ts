@@ -4,7 +4,8 @@ import { parseCard } from '../../core/card/parseCard.js';
 import { extractLorebook, splitDecorators, groupByFolder, loreStats, buildCharacterBook, buildMarkdown } from '../../core/lorebook/normalize.js';
 import { diagnoseLorebook } from '../../core/lorebook/diagnose.js';
 import { simulateActivation } from '../../core/lorebook/activate.js';
-import { estimateLorebookTokens } from '../../core/lorebook/tokens.js';
+import { estimateLorebookTokens, estimateEntryTokens } from '../../core/lorebook/tokens.js';
+import { renderMdLite } from '../../core/lorebook/mdlite.js';   // 표시 전용 안전 마크다운(내보내기·번역 데이터는 원본 유지)
 import {
   PROVIDERS,
   providerDef,
@@ -51,6 +52,21 @@ let activationText = '';
 let activationRan = false;
 let translations: Record<string, { name?: string; content?: string }> = {};
 let theme = localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light';
+let mdRaw = false;   // 본문 보기: 렌더(기본) ↔ 원문
+// 진단 이슈 → 목록 경고 도트용(uid → 최고 심각도). lore 바뀔 때마다 재계산(selectChip).
+let issueSevByUid: Record<string, string> = {};
+function refreshIssueMap() {
+  issueSevByUid = {};
+  if (!lore) return;
+  try {
+    const rank: any = { error: 0, warning: 1, info: 2 };
+    for (const i of diagnoseLorebook(lore, { tokenBudget: lore.tokenBudget }).issues) {
+      if (!i.uid || i.code === 'long_entry' || i.code === 'disabled') continue;   // 정보성은 도트 제외(노이즈)
+      if (!(i.uid in issueSevByUid) || rank[i.severity] < rank[issueSevByUid[i.uid]]) issueSevByUid[i.uid] = i.severity;
+    }
+  } catch (_) {}
+}
+const tinyTok = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n));
 
 let chipsEl: HTMLElement;
 let bodyEl: HTMLElement;
@@ -192,6 +208,7 @@ async function selectChip(id: string) {
     } else {
       selectedUid = realEntries()[0]?.uid || '';
       statusText = `${chip.name}에서 로어북을 읽었습니다.`;
+      refreshIssueMap();
     }
   } catch (e) {
     console.warn('[lorebook] parse failed', e);
@@ -308,19 +325,32 @@ function buildEmpty() {
   wrap.appendChild(dz);
   return wrap;
 }
+// 요약 = 통계(버튼처럼 안 보이게: 숫자 강조 + 라벨 흐림). 종류는 뱃지 하나만.
+function statPair(value: string, label: string) {
+  const s = document.createElement('span');
+  s.className = 'stat';
+  const b = document.createElement('b'); b.textContent = value;
+  s.append(b, document.createTextNode(label));
+  return s;
+}
 function buildSummary() {
   const st = loreStats(lore.entries);
   const tk = estimateLorebookTokens(lore.entries);
   const bar = document.createElement('section');
   bar.className = 'summary';
-  bar.append(
+  const title = document.createElement('div');
+  title.className = 'book-title';
+  title.append(
     span('book-name', lore.bookName || parsed?.name || '로어북'),
-    stat(`엔트리 ${st.total}`),
-    stat(`상시 ${st.constant}`),
-    stat(`비활성 ${st.disabled}`),
-    stat(`본문 ${fmtChars(st.chars)}자`),
-    stat(`추정 ${fmtChars(tk.total)}토큰`),
-    stat(lore.kind === 'module' ? '리스 모듈' : '봇카드'),
+    span('kind-badge', lore.kind === 'module' ? '리스 모듈' : lore.kind === 'risu-export' ? '로어북 파일' : '봇카드'),
+  );
+  bar.appendChild(title);
+  bar.append(
+    statPair(String(st.total), '엔트리'),
+    statPair(String(st.constant), '상시활성'),
+    ...(st.disabled ? [statPair(String(st.disabled), '비활성')] : []),
+    statPair(fmtChars(st.chars), '자'),
+    statPair('~' + tinyTok(tk.total), '토큰'),
   );
   bar.appendChild(span('spacer', ''));
   const search = document.createElement('input');
@@ -367,16 +397,32 @@ function buildEntryList() {
   panel.appendChild(scroll);
   return panel;
 }
+// 목록 행 = 스캔 도구: 상시활성=좌측 초록 보더 · 비활성=흐림 · 선택=서표 리본(CSS) ·
+//   키워드=칩 미리보기 · 우측=분량(토큰)+진단 경고 도트.
 function entryRow(e: any) {
   const row = document.createElement('button');
-  row.className = 'entry-row' + (e.uid === selectedUid ? ' active' : '');
-  row.onclick = () => { selectedUid = e.uid; renderBody(); };
+  row.className = 'entry-row'
+    + (e.uid === selectedUid ? ' active' : '')
+    + (e.constant ? ' constant' : '')
+    + (!e.enabled ? ' off' : '');
+  row.onclick = () => { selectedUid = e.uid; readerTab = 'read'; renderBody(); };
   row.append(span('entry-title', displayName(e)));
-  const flags = document.createElement('span');
-  flags.className = 'entry-flags';
-  flags.appendChild(span('dot ' + (!e.enabled ? 'disabled' : e.constant ? 'constant' : ''), ''));
-  row.appendChild(flags);
-  row.appendChild(span('entry-sub', e.keys.length ? e.keys.join(', ') : '(키워드 없음)'));
+  const meta = document.createElement('span');
+  meta.className = 'entry-meta';
+  const sev = issueSevByUid[e.uid];
+  if (sev) { const w = span('issue-dot ' + sev, ''); w.title = '진단 탭에서 확인할 문제가 있어요'; meta.appendChild(w); }
+  if (translations[e.uid]) { const t = span('tr-dot', ''); t.title = '번역됨'; meta.appendChild(t); }
+  meta.appendChild(span('entry-tok', tinyTok(estimateEntryTokens(e))));
+  row.appendChild(meta);
+  const chipsRow = document.createElement('span');
+  chipsRow.className = 'entry-keys';
+  if (e.keys.length) {
+    e.keys.slice(0, 3).forEach((k: string) => chipsRow.appendChild(span('keychip mini', k)));
+    if (e.keys.length > 3) chipsRow.appendChild(span('keychip mini more', '+' + (e.keys.length - 3)));
+  } else {
+    chipsRow.appendChild(span('entry-nokey', e.constant ? '항상 발동' : '키워드 없음'));
+  }
+  row.appendChild(chipsRow);
   return row;
 }
 function buildReader() {
@@ -402,8 +448,21 @@ function buildReader() {
   }
   const content = displayContent(e);
   const split = splitDecorators(content);
+  // ── 종이 페이지(스크롤) 안에 색인 카드 헤더 + 조판된 본문 — "설정집을 책처럼" ──
+  const page = document.createElement('div');
+  page.className = 'reader-page';
+  const sheet = document.createElement('div');
+  sheet.className = 'page-sheet';
   const head = document.createElement('div');
   head.className = 'reader-head';
+  const eyebrow = document.createElement('div');
+  eyebrow.className = 'entry-eyebrow';
+  const folderName = e.folder ? (lore.entries.find((f: any) => f.isFolder && (f.raw.id === e.folder || f.raw.key === e.folder || f.name === e.folder))?.name || '') : '';
+  eyebrow.append(
+    span('eyebrow-kind', folderName || (lore.bookName || '로어북')),
+    span('eyebrow-pos', `${tinyTok(estimateEntryTokens(e))} 토큰 · ${fmtChars((split.body || content).length)}자`),
+  );
+  head.appendChild(eyebrow);
   const title = document.createElement('div');
   title.className = 'reader-title';
   const h = document.createElement('h1');
@@ -413,30 +472,50 @@ function buildReader() {
   badges.className = 'entry-flags';
   if (e.constant) badges.appendChild(span('badge constant', '상시활성'));
   if (!e.enabled) badges.appendChild(span('badge disabled', '비활성'));
-  if (e.selective) badges.appendChild(span('badge selective', '2차 키'));
   if (e.useRegex) badges.appendChild(span('badge regex', '정규식'));
   title.appendChild(badges);
   head.appendChild(title);
+  // 표제어 줄: 발동 키워드(원문 고정) + 2차 키 + 데코레이터 — 각각 라벨로 구분.
   const keyline = document.createElement('div');
   keyline.className = 'chipline';
-  e.keys.forEach((k: string) => keyline.appendChild(span('keychip', k)));
-  e.secondaryKeys.forEach((k: string) => keyline.appendChild(span('keychip', `2차: ${k}`)));
-  split.decorators.forEach((d: string) => keyline.appendChild(span('decorator', d)));
-  if (!keyline.childNodes.length) keyline.appendChild(span('keychip', '키워드 없음'));
+  if (e.keys.length) {
+    keyline.appendChild(span('chip-label', '발동 키워드'));
+    e.keys.forEach((k: string) => keyline.appendChild(span('keychip', k)));
+  }
+  if (e.secondaryKeys.length) {
+    keyline.appendChild(span('chip-label', '+ 2차 조건'));
+    e.secondaryKeys.forEach((k: string) => keyline.appendChild(span('keychip second', k)));
+  }
+  if (!e.keys.length && !e.secondaryKeys.length) keyline.appendChild(span('chip-label', e.constant ? '키워드 없이 항상 포함되는 설정' : '발동 키워드 없음'));
   head.appendChild(keyline);
+  if (split.decorators.length) {
+    const deco = document.createElement('div');
+    deco.className = 'chipline deco-line';
+    deco.appendChild(span('chip-label', '데코레이터'));
+    split.decorators.forEach((d: string) => deco.appendChild(span('decorator', d)));
+    head.appendChild(deco);
+  }
   const acts = document.createElement('div');
   acts.className = 'reader-actions';
+  const rawBtn = button(mdRaw ? '렌더 보기' : '원문 보기', () => { mdRaw = !mdRaw; renderBody(); }, 'ghost');
+  rawBtn.title = '마크다운 렌더 ↔ 원문 그대로';
   acts.append(
     button('본문 복사', () => copyText(split.body || content)),
-    button('엔트리 Markdown', () => copyText(entryMarkdown(e))),
+    button('Markdown 복사', () => copyText(entryMarkdown(e))),
+    rawBtn,
     button('이 엔트리 번역', () => translateEntries([e]), 'primary'),
   );
   head.appendChild(acts);
-  panel.appendChild(head);
+  sheet.appendChild(head);
   const body = document.createElement('div');
-  body.className = 'reader-body';
-  body.textContent = split.body || content || '(본문 없음)';
-  panel.appendChild(body);
+  body.className = 'reader-body' + (mdRaw ? ' raw' : '');
+  const text = split.body || content || '';
+  if (!text.trim()) body.textContent = '(본문 없음)';
+  else if (mdRaw) body.textContent = text;
+  else body.innerHTML = renderMdLite(text);   // mdlite = 전체 이스케이프 후 화이트리스트 태그만 생성(XSS 안전, 테스트로 고정)
+  sheet.appendChild(body);
+  page.appendChild(sheet);
+  panel.appendChild(page);
   return panel;
 }
 
