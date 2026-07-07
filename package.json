@@ -1,0 +1,20 @@
+{
+  "name": "lorebook-extractor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RisuAI 봇카드와 모듈에서 로어북을 꺼내 읽기 좋게 보는 웹앱",
+  "author": "dootaang",
+  "license": "GPL-3.0-or-later",
+  "type": "commonjs",
+  "scripts": {
+    "web:build": "esbuild web/src/main.ts --bundle --format=iife --outfile=web/dist/main.js",
+    "web:dev": "esbuild web/src/main.ts --bundle --format=iife --outfile=web/dist/main.js --servedir=web --serve=8134 --watch=forever",
+    "test": "node core/lorebook/normalize.test.js && node core/lorebook/analysis.test.js"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}

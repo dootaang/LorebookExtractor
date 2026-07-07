@@ -1,0 +1,8 @@
+# 의존성·빌드 산출물
+node_modules/
+web/dist/
+
+# 잡파일
+*.log
+Thumbs.db
+.DS_Store

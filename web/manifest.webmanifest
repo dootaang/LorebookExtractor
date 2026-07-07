@@ -1,0 +1,16 @@
+{
+  "name": "로어북 추출기",
+  "short_name": "로어북",
+  "description": "RisuAI 봇카드와 모듈에서 로어북을 꺼내 읽고, 복사하고, 내보내고, 번역하는 웹앱",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f0df",
+  "theme_color": "#f7f0df",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
+

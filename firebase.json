@@ -1,0 +1,23 @@
+{
+  "hosting": {
+    "public": "web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "src/**"
+    ],
+    "headers": [
+      {
+        "comment": "Entry files are no-cache so each deploy picks up the latest bundle.",
+        "source": "**/*.@(html|css)",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache, max-age=0, must-revalidate" }]
+      },
+      {
+        "source": "/dist/main.js",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache, max-age=0, must-revalidate" }]
+      }
+    ]
+  }
+}
+

@@ -1,0 +1,28 @@
+name: Deploy web to Firebase Hosting
+
+# Builds the static web bundle and deploys it to Firebase Hosting on main pushes.
+# Required secret: FIREBASE_SERVICE_ACCOUNT_LOREBOOKEXTRACTOR.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run web:build
+      - uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LOREBOOKEXTRACTOR }}
+          channelId: live
+          projectId: lorebookextractor
+
