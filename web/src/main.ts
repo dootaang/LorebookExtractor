@@ -5,6 +5,7 @@ import { extractLorebook, splitDecorators, groupByFolder, loreStats, buildCharac
 import { diagnoseLorebook } from '../../core/lorebook/diagnose.js';
 import { simulateActivation } from '../../core/lorebook/activate.js';
 import { estimateLorebookTokens, estimateEntryTokens } from '../../core/lorebook/tokens.js';
+import { extractGlossary, buildGlossaryText } from '../../core/lorebook/glossary.js';   // 용어집(고유명사 표기 쌍) — 채팅 번역 일관성용
 import { renderMdLite } from '../../core/lorebook/mdlite.js';   // 표시 전용 안전 마크다운(내보내기·번역 데이터는 원본 유지)
 import {
   PROVIDERS,
@@ -28,7 +29,7 @@ import {
 
 type FilterMode = 'all' | 'constant' | 'conditional' | 'disabled';
 type SortMode = 'order' | 'name' | 'length';
-type ReaderTab = 'read' | 'diagnose' | 'activate' | 'export';
+type ReaderTab = 'read' | 'diagnose' | 'activate' | 'glossary' | 'export';
 
 const app = document.getElementById('app')!;
 const ACCEPT = '.charx,.png,.json,.jpeg,.jpg,.risum,.module.charx';
@@ -52,6 +53,7 @@ let activationText = '';
 let activationRan = false;
 let translations: Record<string, { name?: string; content?: string }> = {};
 let keyAdds: Record<string, string[]> = {};   // 발동 키 다국어 무장 — 원본 키에 "추가"만(내보내기 반영)
+let glossaryRows: any[] | null = null;        // 용어집(지연 추출·LLM 채움 결과 보존)
 let theme = localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light';
 let mdRaw = false;   // 본문 보기: 렌더(기본) ↔ 원문
 let mobilePane: 'list' | 'reader' = 'list';   // 좁은 화면: 목록 ↔ 본문 한 화면씩(데스크탑은 CSS가 무시)
@@ -221,6 +223,7 @@ async function selectChip(id: string) {
       statusText = `${chip.name}에서 로어북을 읽었습니다.`;
       refreshIssueMap();
       keyAdds = {};   // 파일 단위 상태 초기화
+      glossaryRows = null;
       mobilePane = 'list';   // 새 파일 = 좁은 화면에선 목록부터
     }
   } catch (e) {
@@ -475,6 +478,10 @@ function buildReader() {
     panel.appendChild(buildActivateView());
     return panel;
   }
+  if (readerTab === 'glossary') {
+    panel.appendChild(buildGlossaryView());
+    return panel;
+  }
   if (readerTab === 'export') {
     panel.appendChild(buildExportView());
     return panel;
@@ -567,7 +574,7 @@ function buildReaderTabs() {
   const back = button('← 목록', () => { mobilePane = 'list'; renderBody(); }, 'ghost');
   back.className = 'mob-back';   // 좁은 화면에서만 보임(CSS)
   tabs.appendChild(back);
-  const items: [ReaderTab, string][] = [['read', '읽기'], ['diagnose', '진단'], ['activate', '활성화 테스트'], ['export', '내보내기']];
+  const items: [ReaderTab, string][] = [['read', '읽기'], ['diagnose', '진단'], ['activate', '활성화 테스트'], ['glossary', '용어집'], ['export', '내보내기']];
   for (const [id, label] of items) {
     const b = button(label, () => { readerTab = id; renderBody(); });
     b.className = 'tab' + (readerTab === id ? ' active' : '');
@@ -793,6 +800,99 @@ function exportNormalized() {
     })),
   };
   downloadText(JSON.stringify(data, null, 2), exportBaseName() + '.normalized.json', 'application/json;charset=utf-8');
+}
+
+// ── 용어집 — 로어북 고유명사 표기 쌍을 뽑아 리스/기가트랜스 번역 프롬프트에 붙여넣게 함(표기 일관성).
+//   추출은 결정론(키 속 다국어 변형 짝짓기, glossary.js) → 빈 번역만 선택적 LLM 채움.
+const GLOSSARY_PROMPT = '입력은 롤플레이 설정의 고유명사(인명·지명·용어)입니다. 한국어 관용 표기(음차 또는 통용 번역) 딱 하나만 출력하세요. 설명·따옴표를 붙이지 마세요.';
+
+function glossary(): any[] {
+  if (!glossaryRows) glossaryRows = extractGlossary(lore.entries);
+  return glossaryRows;
+}
+
+async function fillGlossary() {
+  if (translating) return;
+  try { await ensureTranslateReady(); }
+  catch (e) { toast(e.message || String(e)); settingsOpen = true; render(); return; }
+  const rows = glossary().filter((r: any) => !r.ko);
+  if (!rows.length) { toast('채울 빈 번역이 없어요 — 이미 전부 짝지어져 있습니다.'); return; }
+  const jobs = rows.map((r: any) => ({ uid: r.term, field: 'gloss', text: r.term }));
+  translating = true;
+  statusText = '용어 번역 준비 중...';
+  renderBody();
+  try {
+    const res = await translateJobs(jobs, {
+      stylePrompt: GLOSSARY_PROMPT,
+      skipKorean: false,
+      onProgress: (d: number, t: number) => { statusText = `용어 번역 중 ${d}/${t}`; renderBody(); },
+    });
+    let filled = 0;
+    res.blocks.forEach((text: any, i: number) => {
+      const v = String(text == null ? '' : text).trim().split('\n')[0].replace(/^["'「]|["'」]$/g, '');
+      if (v && v.toLowerCase() !== rows[i].term.toLowerCase()) { rows[i].ko = v; rows[i].llm = true; filled++; }
+    });
+    statusText = `용어 ${filled}개 번역 완료 — 복사해서 번역 프롬프트에 붙여넣으세요.`;
+    if (res.failed.length) statusText += ` · 실패 ${res.failed.length}(빈칸 유지)`;
+  } catch (e) { statusText = '용어 번역 실패: ' + ((e && e.message) || e); }
+  translating = false;
+  renderBody();
+}
+
+function buildGlossaryView() {
+  const box = document.createElement('div');
+  box.className = 'reader-tab-body analysis-body';
+  const rows = glossary();
+  const paired = rows.filter((r: any) => r.ko).length;
+  const empty = rows.length - paired;
+  const summary = document.createElement('div');
+  summary.className = 'analysis-summary';
+  summary.append(
+    statPair(String(rows.length), '용어'),
+    statPair(String(paired), '짝지어짐'),
+    ...(empty ? [statPair(String(empty), '빈칸')] : []),
+  );
+  box.appendChild(summary);
+  const note = document.createElement('p');
+  note.className = 'panel-note';
+  note.textContent = '로어북에서 뽑은 고유명사 표기 쌍이에요. 복사해서 리스 번역 프롬프트나 기가트랜스 사용자 프롬프트에 붙여넣으면 채팅 번역의 이름 표기가 일관돼요. 짝은 발동 키에 든 다국어 변형에서 자동으로 찾았고, 빈칸은 API 키로 채울 수 있어요(빈칸은 복사에서 제외).';
+  box.appendChild(note);
+  const acts = document.createElement('div');
+  acts.className = 'reader-actions';
+  const copyBtn = button('프롬프트용 복사', () => {
+    const t = buildGlossaryText(rows);
+    if (!t) { toast('복사할 쌍이 없어요 — 먼저 빈 번역을 채우세요.'); return; }
+    copyText(t);
+  }, 'primary');
+  acts.append(
+    ...(empty ? [button(`빈 번역 채우기 (${empty}개)`, fillGlossary)] : []),
+    copyBtn,
+    button('.txt 저장', () => {
+      const t = buildGlossaryText(rows);
+      if (!t) { toast('저장할 쌍이 없어요 — 먼저 빈 번역을 채우세요.'); return; }
+      downloadText(t, exportBaseName() + '.glossary.txt');
+    }),
+  );
+  box.appendChild(acts);
+  if (!rows.length) {
+    box.appendChild(div('analysis-placeholder', '용어로 쓸 만한 고유명사를 찾지 못했어요 — 발동 키워드가 없는 로어북이에요.'));
+    return box;
+  }
+  const list = document.createElement('div');
+  list.className = 'gloss-list';
+  for (const r of rows) {
+    const row = document.createElement('div');
+    row.className = 'gloss-row' + (r.ko ? '' : ' empty');
+    row.append(
+      span('gloss-term', r.term),
+      span('gloss-eq', '='),
+      span('gloss-ko' + (r.llm ? ' llm' : ''), r.ko || '—'),
+      span('gloss-src', r.source || ''),
+    );
+    list.appendChild(row);
+  }
+  box.appendChild(list);
+  return box;
 }
 
 // ── 발동 키 다국어 무장 — 채팅 언어와 키 언어가 다르면 로어북이 발동하지 않는 구조적 구멍을 메움.
