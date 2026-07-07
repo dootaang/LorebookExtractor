@@ -133,17 +133,26 @@ function loreStats(entries) {
 
 // ── 내보내기 빌더 ──────────────────────────────────────────────────────────
 // tr: uid → { name?, content? } 번역 맵(없으면 원문). nameMode: 'tr'|'orig'(번역 반영 시 이름 처리).
+// keyAdd: uid → string[] — "발동 키 다국어 무장"이 추가한 번역 키(★원본 키는 절대 대체 안 함, 뒤에 덧붙임+중복 제거).
 const pick = (tr, e, nameMode) => ({
   name: (tr && tr[e.uid] && tr[e.uid].name != null && nameMode !== 'orig') ? tr[e.uid].name : e.name,
   content: (tr && tr[e.uid] && tr[e.uid].content != null) ? tr[e.uid].content : e.content,
 });
+function mergedKeys(e, keyAdd) {
+  const extra = keyAdd && Array.isArray(keyAdd[e.uid]) ? keyAdd[e.uid] : [];
+  if (!extra.length) return e.keys.slice();
+  const seen = new Set(e.keys.map((k) => k.toLowerCase()));
+  const out = e.keys.slice();
+  for (const k of extra) { const l = String(k).trim(); if (!l || seen.has(l.toLowerCase())) continue; seen.add(l.toLowerCase()); out.push(l); }
+  return out;
+}
 
-// CCv3 character_book JSON(리스에 도로 넣을 수 있는 표준). 키·발동 설정은 항상 원문 유지.
-function buildCharacterBook(lore, tr, nameMode) {
+// CCv3 character_book JSON(리스에 도로 넣을 수 있는 표준). 키·발동 설정은 원문 유지(무장 키는 "추가"만).
+function buildCharacterBook(lore, tr, nameMode, keyAdd) {
   const entries = lore.entries.filter((e) => !e.isFolder).map((e, i) => {
     const v = pick(tr, e, nameMode);
     return {
-      keys: e.keys.slice(),
+      keys: mergedKeys(e, keyAdd),
       secondary_keys: e.secondaryKeys.slice(),
       comment: v.name,
       content: v.content,
@@ -159,7 +168,7 @@ function buildCharacterBook(lore, tr, nameMode) {
 }
 
 // 읽기·공유용 Markdown.
-function buildMarkdown(lore, tr, nameMode) {
+function buildMarkdown(lore, tr, nameMode, keyAdd) {
   const out = [`# ${lore.bookName || '로어북'}`, ''];
   const st = loreStats(lore.entries);
   out.push(`> 엔트리 ${st.total}개 · 상시활성 ${st.constant}개 · 약 ${Math.round(st.chars / 1000)}천 글자`, '');
@@ -170,6 +179,8 @@ function buildMarkdown(lore, tr, nameMode) {
       const flags = [e.constant ? '상시활성' : '', e.enabled ? '' : '비활성', e.selective ? '2차키' : '', e.useRegex ? '정규식' : ''].filter(Boolean);
       out.push(`### ${v.name || e.keys[0] || '(이름 없음)'}`);
       if (e.keys.length) out.push(`- 키워드: ${e.keys.join(', ')}`);
+      const extra = keyAdd && Array.isArray(keyAdd[e.uid]) ? keyAdd[e.uid] : [];
+      if (extra.length) out.push(`- 추가 발동 키: ${extra.join(', ')}`);
       if (e.secondaryKeys.length) out.push(`- 2차 키워드: ${e.secondaryKeys.join(', ')}`);
       if (flags.length) out.push(`- 속성: ${flags.join(' · ')}`);
       out.push('', v.content, '');
@@ -178,4 +189,4 @@ function buildMarkdown(lore, tr, nameMode) {
   return out.join('\n');
 }
 
-module.exports = { extractLorebook, splitDecorators, groupByFolder, loreStats, buildCharacterBook, buildMarkdown };
+module.exports = { extractLorebook, splitDecorators, groupByFolder, loreStats, buildCharacterBook, buildMarkdown, mergedKeys };

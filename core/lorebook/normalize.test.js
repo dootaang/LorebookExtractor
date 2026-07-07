@@ -60,6 +60,14 @@ ok('risu export: fields', () => {
 });
 
 ok('Markdown 빌드', () => { const md = buildMarkdown(L2, null, 'orig'); assert.ok(md.includes('폴더A') && md.includes('오키, Aoi')); });
+ok('발동 키 무장: 추가만·원본 보존·중복 제거(대소문자)', () => {
+  const keyAdd = { e0: ['검', 'SWORD', '전투', 'battle'] };   // SWORD/battle=원본과 중복(케이스 무시) → 탈락
+  const j = buildCharacterBook(L1, null, 'orig', keyAdd);
+  assert.deepEqual(j.data.entries[0].keys, ['sword', 'battle', '검', '전투']);
+  assert.deepEqual(j.data.entries[1].keys, []);   // 무장 안 한 엔트리는 무변경
+  const md = buildMarkdown(L1, null, 'orig', keyAdd);
+  assert.ok(md.includes('추가 발동 키: 검, SWORD, 전투, battle') || md.includes('추가 발동 키'));
+});
 
 // ── 실파일 회귀(있을 때만 — CI 스킵) ──
 function findNamedFile(dir, filename) {

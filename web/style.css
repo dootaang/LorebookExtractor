@@ -50,7 +50,9 @@ body {
   color: var(--text);
   font: 14px/1.5 "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
 }
-#app { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
+/* ★height 고정(min-height 금지) — min이면 내용만큼 자라 내부 스크롤이 안 걸리고 하단 액션바가
+   화면 밖으로 밀린다(긴 로어북에서 하단바 실종 버그의 원인). 각 패널이 자기 스크롤을 가진다. */
+#app { height: 100vh; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
 
 button, input, select, textarea { font: inherit; }
 button {
@@ -344,6 +346,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent2); }
   font-size: 12px;
 }
 .keychip.second { color: var(--dim); border-style: dashed; }
+.keychip.added { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); background: color-mix(in srgb, var(--ok) 7%, var(--paper)); }
+.chip-label.added-label { color: var(--ok); }
+.arm-panel { width: min(520px, 96vw); }
 .decorator { color: var(--warn); font-size: 11.5px; background: color-mix(in srgb, var(--warn) 7%, var(--paper)); border-color: color-mix(in srgb, var(--warn) 30%, var(--line)); }
 /* 본문 조판: 66~70자 측정폭·1.75 행간 — 렌더 모드는 마크다운 위계, 원문 모드는 pre-wrap. */
 .reader-body {

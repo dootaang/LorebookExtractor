@@ -230,7 +230,7 @@ export async function ensureTranslateReady(): Promise<void> {
 
 export async function translateJobs(jobs: any[], opts: any): Promise<any> {
   const prefs = getTranslatePrefs();
-  const targetLang = prefs.targetLang || '한국어';
+  const targetLang = (opts && opts.targetLang) || prefs.targetLang || '한국어';   // 발동 키 무장 등 목적별 언어 오버라이드
   const stylePrompt = opts && opts.stylePrompt != null ? opts.stylePrompt : getActivePrompt();
   const maxResponse = opts && opts.maxResponse != null ? opts.maxResponse : getActiveMaxResponse();
   const keys = jobs.map((j) => cacheKey(j.text, targetLang, stylePrompt, j.field));
@@ -251,7 +251,7 @@ export async function translateJobs(jobs: any[], opts: any): Promise<any> {
   if (missJobs.length) {
     const blocks = missJobs.map((j) => j.text);
     const res = await translateBlocks(blocks, makeRawTranslate(targetLang, stylePrompt), {
-      skipKorean: prefs.skipKorean !== false,
+      skipKorean: opts && opts.skipKorean != null ? !!opts.skipKorean : prefs.skipKorean !== false,   // 키 무장은 한국어 키도 번역 대상(false로 옴)
       combine: getCombineOn(),
       batchChars: Number(prefs.batchChars) || DEFAULT_PREFS.batchChars,
       batchCount: Number(prefs.batchCount) || DEFAULT_PREFS.batchCount,

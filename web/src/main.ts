@@ -51,6 +51,7 @@ let translating = false;
 let activationText = '';
 let activationRan = false;
 let translations: Record<string, { name?: string; content?: string }> = {};
+let keyAdds: Record<string, string[]> = {};   // 발동 키 다국어 무장 — 원본 키에 "추가"만(내보내기 반영)
 let theme = localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light';
 let mdRaw = false;   // 본문 보기: 렌더(기본) ↔ 원문
 let mobilePane: 'list' | 'reader' = 'list';   // 좁은 화면: 목록 ↔ 본문 한 화면씩(데스크탑은 CSS가 무시)
@@ -219,6 +220,7 @@ async function selectChip(id: string) {
       selectedUid = realEntries()[0]?.uid || '';
       statusText = `${chip.name}에서 로어북을 읽었습니다.`;
       refreshIssueMap();
+      keyAdds = {};   // 파일 단위 상태 초기화
       mobilePane = 'list';   // 새 파일 = 좁은 화면에선 목록부터
     }
   } catch (e) {
@@ -518,6 +520,10 @@ function buildReader() {
     keyline.appendChild(span('chip-label', '발동 키워드'));
     e.keys.forEach((k: string) => keyline.appendChild(span('keychip', k)));
   }
+  if (keyAdds[e.uid] && keyAdds[e.uid].length) {
+    keyline.appendChild(span('chip-label added-label', '+ 추가 발동 키'));
+    keyAdds[e.uid].forEach((k: string) => keyline.appendChild(span('keychip added', k)));
+  }
   if (e.secondaryKeys.length) {
     keyline.appendChild(span('chip-label', '+ 2차 조건'));
     e.secondaryKeys.forEach((k: string) => keyline.appendChild(span('keychip second', k)));
@@ -740,7 +746,8 @@ function buildBottomActions() {
   bar.appendChild(toggle);
   bar.append(
     button('전체 번역', () => translateEntries(realEntries()), 'primary'),
-    button('전체 복사', () => copyText(buildMarkdown(lore, showTranslated ? translations : null, 'tr'))),
+    button('발동 키 무장', openArmModal),
+    button('전체 복사', () => copyText(buildMarkdown(lore, showTranslated ? translations : null, 'tr', keyAdds))),
     button('Markdown 저장', () => exportMarkdown()),
     button('CCv3 JSON 저장', () => exportCharacterBook()),
     button('정규화 JSON 저장', () => exportNormalized()),
@@ -756,6 +763,7 @@ function entryMarkdown(e: any) {
   const content = v.content || e.content || '';
   const lines = [`### ${name}`];
   if (e.keys.length) lines.push(`- 키워드: ${e.keys.join(', ')}`);
+  if (keyAdds[e.uid] && keyAdds[e.uid].length) lines.push(`- 추가 발동 키: ${keyAdds[e.uid].join(', ')}`);
   if (e.secondaryKeys.length) lines.push(`- 2차 키워드: ${e.secondaryKeys.join(', ')}`);
   lines.push('', content);
   return lines.join('\n');
@@ -765,10 +773,10 @@ function exportBaseName() {
   return safeName(lore?.bookName || parsed?.name || chip?.name || 'lorebook');
 }
 function exportMarkdown() {
-  downloadText(buildMarkdown(lore, showTranslated ? translations : null, 'tr'), exportBaseName() + '.md');
+  downloadText(buildMarkdown(lore, showTranslated ? translations : null, 'tr', keyAdds), exportBaseName() + '.md');
 }
 function exportCharacterBook() {
-  const data = buildCharacterBook(lore, showTranslated ? translations : null, 'tr');
+  const data = buildCharacterBook(lore, showTranslated ? translations : null, 'tr', keyAdds);
   downloadText(JSON.stringify(data, null, 2), exportBaseName() + '.character_book.json', 'application/json;charset=utf-8');
 }
 function exportNormalized() {
@@ -780,10 +788,86 @@ function exportNormalized() {
       ...e,
       displayName: displayName(e),
       displayContent: displayContent(e),
+      ...(keyAdds[e.uid] && keyAdds[e.uid].length ? { addedKeys: keyAdds[e.uid].slice() } : {}),
       raw: undefined,
     })),
   };
   downloadText(JSON.stringify(data, null, 2), exportBaseName() + '.normalized.json', 'application/json;charset=utf-8');
+}
+
+// ── 발동 키 다국어 무장 — 채팅 언어와 키 언어가 다르면 로어북이 발동하지 않는 구조적 구멍을 메움.
+//   원본 키는 절대 대체하지 않고 번역 키를 "추가"만(중복 제거) → 내보내기(CCv3/MD)에 반영 → 리스에 되넣으면
+//   그 언어 채팅에서도 발동. 정규식 키 엔트리는 제외(패턴 번역=파손 위험).
+const KEY_ARM_PROMPT = (lang: string) =>
+  `입력은 로어북 발동 키워드 목록(쉼표 구분)입니다. 각 키워드를 ${lang} 채팅에서 실제로 쓸 법한 표현으로 번역하세요. ` +
+  `반드시 쉼표로 구분해 같은 개수·같은 순서로만 출력하고, 설명·번호·다른 말은 붙이지 마세요. ` +
+  `인명·지명 같은 고유명사는 ${lang} 관용 표기(음차)로 적으세요.`;
+
+async function armKeys(lang: string) {
+  if (translating) return;
+  try { await ensureTranslateReady(); }
+  catch (e) { toast(e.message || String(e)); settingsOpen = true; render(); return; }
+  const targets = realEntries().filter((e: any) => e.keys.length && !e.useRegex);
+  if (!targets.length) { toast('번역할 발동 키워드가 없어요(정규식 키 엔트리는 제외).'); return; }
+  const jobs = targets.map((e: any) => ({ uid: e.uid, field: 'keys:' + lang, text: e.keys.join(', ') }));
+  translating = true;
+  statusText = '발동 키 번역 준비 중...';
+  renderBody();
+  try {
+    const res = await translateJobs(jobs, {
+      stylePrompt: KEY_ARM_PROMPT(lang),
+      targetLang: lang,
+      skipKorean: false,   // 한국어 키도 대상(예: 한국어 키 → 일본어 무장)
+      onProgress: (d: number, t: number) => { statusText = `발동 키 번역 중 ${d}/${t}`; renderBody(); },
+    });
+    let added = 0, armed = 0;
+    res.blocks.forEach((text: any, i: number) => {
+      const e = targets[i];
+      if (text == null) return;
+      const have = new Set(e.keys.map((k: string) => k.toLowerCase()));
+      (keyAdds[e.uid] || []).forEach((k: string) => have.add(k.toLowerCase()));
+      const fresh = String(text).split(',').map((s) => s.trim()).filter(Boolean)
+        .filter((k) => { const l = k.toLowerCase(); if (have.has(l)) return false; have.add(l); return true; });
+      if (fresh.length) { keyAdds[e.uid] = (keyAdds[e.uid] || []).concat(fresh); added += fresh.length; armed++; }
+    });
+    statusText = added
+      ? `발동 키 무장 완료 — ${armed}개 엔트리에 ${lang} 키 ${added}개 추가(내보내기에 반영)`
+      : '추가할 새 키가 없었어요(이미 같은 키가 있거나 번역이 동일).';
+    if (res.failed.length) statusText += ` · 실패 ${res.failed.length}(원본 유지)`;
+  } catch (e) { statusText = '발동 키 번역 실패: ' + ((e && e.message) || e); }
+  translating = false;
+  renderBody();
+}
+
+function openArmModal() {
+  const ov = document.createElement('div');
+  ov.className = 'modal';
+  const close = () => ov.remove();
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  const panel = document.createElement('div');
+  panel.className = 'settings-panel arm-panel';
+  const head = document.createElement('div');
+  head.className = 'settings-head';
+  head.innerHTML = '<h2>발동 키 다국어 무장</h2>';
+  head.appendChild(button('닫기', close));
+  panel.appendChild(head);
+  const body = document.createElement('div');
+  body.className = 'settings-body';
+  const info = document.createElement('p');
+  info.className = 'panel-note';
+  info.textContent = '로어북은 채팅에 키워드가 그대로 나와야 발동해요. 채팅 언어와 키 언어가 다르면(예: 일본어 채팅 + 영어 키) 발동하지 않죠. 원본 키는 그대로 두고, 선택한 언어의 번역 키를 옆에 추가합니다 — 내보낸 파일을 리스에 넣으면 그 언어로도 발동해요.';
+  body.appendChild(info);
+  const langSel = selectEl([['일본어', '일본어'], ['한국어', '한국어'], ['영어', '영어'], ['중국어', '중국어']], '일본어');
+  body.appendChild(field('추가할 키 언어', langSel, '정규식 키 엔트리는 건드리지 않아요. 같은 키는 중복 추가되지 않습니다.'));
+  const armedNow = Object.values(keyAdds).reduce((n, a) => n + a.length, 0);
+  const acts = document.createElement('div');
+  acts.className = 'reader-actions';
+  acts.appendChild(button('무장 시작', () => { close(); armKeys(langSel.value); }, 'primary'));
+  if (armedNow) acts.appendChild(button(`추가 키 모두 지우기 (${armedNow}개)`, () => { keyAdds = {}; close(); statusText = '추가 키를 모두 지웠어요.'; renderBody(); }));
+  body.appendChild(acts);
+  panel.appendChild(body);
+  ov.appendChild(panel);
+  document.body.appendChild(ov);
 }
 
 async function translateEntries(entries: any[], force = false) {
