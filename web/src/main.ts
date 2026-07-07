@@ -313,6 +313,9 @@ function renderChips() {
 }
 function renderBody() {
   if (!bodyEl) return;
+  // 목록 스크롤 보존 — 엔트리 선택 등 재렌더마다 맨 위로 튀던 것 수정.
+  const prevList = bodyEl.querySelector('.list-scroll') as HTMLElement | null;
+  const listTop = prevList ? prevList.scrollTop : 0;
   bodyEl.innerHTML = '';
   if (!chips.length) { bodyEl.appendChild(buildEmpty()); return; }
   if (!lore && !parseError) {
@@ -330,6 +333,8 @@ function renderBody() {
   main.className = 'main';
   main.append(buildSummary(), buildWorkspace(), buildBottomActions());
   bodyEl.appendChild(main);
+  const newList = bodyEl.querySelector('.list-scroll') as HTMLElement | null;
+  if (newList && listTop > 0) newList.scrollTop = listTop;
 }
 // 내장 샘플 즉시 로드 — 파일 없이도 도구를 바로 체험(첫 방문 전환용).
 async function loadSample() {
@@ -716,7 +721,7 @@ function buildExportView() {
   body.className = 'reader-tab-body analysis-body';
   const note = document.createElement('p');
   note.className = 'panel-note';
-  note.textContent = '원본은 수정하지 않고 현재 보기 상태를 다운로드합니다. 키워드는 번역하지 않고 원문을 유지합니다.';
+  note.textContent = '현재 보기 상태 그대로 저장해요. 키워드는 항상 원문.';
   body.appendChild(note);
   const grid = document.createElement('div');
   grid.className = 'export-grid';
@@ -832,8 +837,8 @@ async function fillGlossary() {
       const v = String(text == null ? '' : text).trim().split('\n')[0].replace(/^["'「]|["'」]$/g, '');
       if (v && v.toLowerCase() !== rows[i].term.toLowerCase()) { rows[i].ko = v; rows[i].llm = true; filled++; }
     });
-    statusText = `용어 ${filled}개 번역 완료 — 복사해서 번역 프롬프트에 붙여넣으세요.`;
-    if (res.failed.length) statusText += ` · 실패 ${res.failed.length}(빈칸 유지)`;
+    statusText = `용어 ${filled}개 번역 완료`;
+    if (res.failed.length) statusText += ` · 실패 ${res.failed.length}: ${res.failed[0].error}`;
   } catch (e) { statusText = '용어 번역 실패: ' + ((e && e.message) || e); }
   translating = false;
   renderBody();
@@ -855,7 +860,7 @@ function buildGlossaryView() {
   box.appendChild(summary);
   const note = document.createElement('p');
   note.className = 'panel-note';
-  note.textContent = '로어북에서 뽑은 고유명사 표기 쌍이에요. 복사해서 리스 번역 프롬프트나 기가트랜스 사용자 프롬프트에 붙여넣으면 채팅 번역의 이름 표기가 일관돼요. 짝은 발동 키에 든 다국어 변형에서 자동으로 찾았고, 빈칸은 API 키로 채울 수 있어요(빈칸은 복사에서 제외).';
+  note.textContent = '로어북에서 뽑은 고유명사 표기 쌍이에요.';
   box.appendChild(note);
   const acts = document.createElement('div');
   acts.className = 'reader-actions';
@@ -875,7 +880,7 @@ function buildGlossaryView() {
   );
   box.appendChild(acts);
   if (!rows.length) {
-    box.appendChild(div('analysis-placeholder', '용어로 쓸 만한 고유명사를 찾지 못했어요 — 발동 키워드가 없는 로어북이에요.'));
+    box.appendChild(div('analysis-placeholder', '고유명사를 찾지 못했어요.'));
     return box;
   }
   const list = document.createElement('div');
@@ -931,9 +936,10 @@ async function armKeys(lang: string) {
       if (fresh.length) { keyAdds[e.uid] = (keyAdds[e.uid] || []).concat(fresh); added += fresh.length; armed++; }
     });
     statusText = added
-      ? `발동 키 무장 완료 — ${armed}개 엔트리에 ${lang} 키 ${added}개 추가(내보내기에 반영)`
-      : '추가할 새 키가 없었어요(이미 같은 키가 있거나 번역이 동일).';
-    if (res.failed.length) statusText += ` · 실패 ${res.failed.length}(원본 유지)`;
+      ? `발동 키 무장 — ${armed}개 엔트리에 ${lang} 키 ${added}개 추가`
+      : '추가할 새 키가 없었어요.';
+    // 실패 사유를 삼키지 않는다 — 전멸(키·모델·CORS 오류)의 원인을 사용자가 바로 보게.
+    if (res.failed.length) statusText += ` · 실패 ${res.failed.length}: ${res.failed[0].error}`;
   } catch (e) { statusText = '발동 키 번역 실패: ' + ((e && e.message) || e); }
   translating = false;
   renderBody();
@@ -955,10 +961,10 @@ function openArmModal() {
   body.className = 'settings-body';
   const info = document.createElement('p');
   info.className = 'panel-note';
-  info.textContent = '로어북은 채팅에 키워드가 그대로 나와야 발동해요. 채팅 언어와 키 언어가 다르면(예: 일본어 채팅 + 영어 키) 발동하지 않죠. 원본 키는 그대로 두고, 선택한 언어의 번역 키를 옆에 추가합니다 — 내보낸 파일을 리스에 넣으면 그 언어로도 발동해요.';
+  info.textContent = '원본 키는 그대로 두고 선택한 언어의 번역 키를 추가해요. 내보내서 리스에 넣으면 그 언어 채팅에서도 발동합니다.';
   body.appendChild(info);
   const langSel = selectEl([['일본어', '일본어'], ['한국어', '한국어'], ['영어', '영어'], ['중국어', '중국어']], '일본어');
-  body.appendChild(field('추가할 키 언어', langSel, '정규식 키 엔트리는 건드리지 않아요. 같은 키는 중복 추가되지 않습니다.'));
+  body.appendChild(field('추가할 키 언어', langSel, '정규식 키는 제외, 같은 키는 중복 추가 안 됨.'));
   const armedNow = Object.values(keyAdds).reduce((n, a) => n + a.length, 0);
   const acts = document.createElement('div');
   acts.className = 'reader-actions';
@@ -1014,7 +1020,7 @@ async function translateEntries(entries: any[], force = false) {
       translations[j.uid][j.field] = j.prefix + text + j.suffix;
     });
     statusText = res.failed.length
-      ? `일부 실패: ${res.failed.length}개 · 성공/캐시 ${res.translated}개`
+      ? `일부 실패: ${res.failed.length}개 · 성공/캐시 ${res.translated}개 — ${res.failed[0].error}`
       : `번역 완료: ${res.translated}개${res.cached ? ` (캐시 ${res.cached}개)` : ''}`;
     showTranslated = true;
     toast('번역 완료');

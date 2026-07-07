@@ -17,16 +17,24 @@ const entries = [
 ];
 const rows = extractGlossary(entries);
 
-ok('결정론 짝: 엔트리 안 한글↔비한글 (LLM 0회)', () => {
+ok('결정론 짝 = 로마자 유사도 게이트(음차만, LLM 0회)', () => {
   const r = rows.find((x) => x.term === 'Eun-ha');
-  assert.equal(r.ko, '성은하');   // 한글 이름이 대표 표기
+  assert.equal(r.ko, '은하');   // 음차로 가장 가까운 한글 후보
   assert.equal(r.auto, true);
-  assert.equal(rows.find((x) => x.term === 'Northern Kingdom').ko, '북방 왕국');
+  assert.equal(rows.find((x) => x.term === 'Sung Eun-ha').ko, '성은하');
 });
-ok('한글 후보 없는 엔트리 → ko 빈칸(LLM 채움 대상)', () => {
+ok('음차 아닌 짝은 안 지음(번역 관계 ≠ 음차 — 빈칸=LLM 대상)', () => {
+  assert.equal(rows.find((x) => x.term === 'Northern Kingdom').ko, '');   // 북방 왕국은 번역이지 음차가 아님
   const r = rows.find((x) => x.term === 'sword');
   assert.equal(r.ko, '');
   assert.equal(r.auto, false);
+});
+ok('연동 키 봇(여러 인물 키가 한 엔트리) — 오짝 없음 + 등가 자음(v→b)', () => {
+  const multi = extractGlossary([{ uid: 'm', name: '💎 아르반(마왕의 검)', keys: ['Arvan', '아르반', 'mal', 'Maren', '멜', '마렌', 'Demon King', '마왕'], secondaryKeys: [], content: 'x' }]);
+  assert.equal(multi.find((x) => x.term === 'Arvan').ko, '아르반');    // v→b 등가로 음차 매칭
+  assert.equal(multi.find((x) => x.term === 'Maren').ko, '마렌');      // 자기 짝으로만
+  assert.equal(multi.find((x) => x.term === 'mal').ko, '');            // 3자 약칭=모호 → 보수적으로 빈칸(LLM행)
+  assert.equal(multi.find((x) => x.term === 'Demon King').ko, '');     // 몰아주기 금지(예전 버그)
 });
 ok('전체 중복 term은 1회 + 정규식/폴더 제외', () => {
   assert.equal(rows.filter((x) => x.term.toLowerCase() === 'eun-ha').length, 1);
@@ -35,8 +43,8 @@ ok('전체 중복 term은 1회 + 정규식/폴더 제외', () => {
 ok('프롬프트 텍스트: 쌍만 포함·형식', () => {
   const t = buildGlossaryText(rows);
   assert.ok(t.startsWith('[번역 용어집]'));
-  assert.ok(t.includes('Eun-ha = 성은하') && t.includes('Northern Kingdom = 북방 왕국'));
-  assert.ok(!t.includes('sword'));   // 빈 번역은 제외
+  assert.ok(t.includes('Eun-ha = 은하') && t.includes('Sung Eun-ha = 성은하'));
+  assert.ok(!t.includes('sword') && !t.includes('Northern Kingdom'));   // 빈 번역(비음차 포함)은 제외
   assert.equal(buildGlossaryText([]), '');
 });
 
