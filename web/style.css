@@ -511,6 +511,17 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent2); }
 .export-hero { display: grid; gap: 4px; text-align: left; padding: 14px 16px; }
 .export-hero b { font-size: 15.5px; }
 .export-hero small { font-weight: 500; opacity: .85; }
+.export-formats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: -2px 0 2px;
+}
+.export-formats .fmt-label {
+  color: var(--dim);
+  font-size: 13px;
+}
 
 .bottom-actions {
   display: flex;

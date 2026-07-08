@@ -3,7 +3,9 @@
 import { parseCard } from '../../core/card/parseCard.js';
 import { extractLorebook, splitDecorators, groupByFolder, loreStats, buildCharacterBook, buildMarkdown, mergedKeys } from '../../core/lorebook/normalize.js';
 import { applyLorebookToCard } from '../../core/lorebook/applyCard.js';   // 편집·번역·추가 키 → 원본 카드 JSON
-import { repackCard } from '../../core/card/repack.js';                    // 카드 JSON만 수술 교체(원본 형식 내보내기)
+import { repackCard, repackCharx, zipStartInBytes } from '../../core/card/repack.js';   // 카드 JSON만 수술 교체(원본 형식 내보내기)
+import { encodeJson, encodeCharx, encodePng, pickPngBase } from '../../core/card/cardEncode.js';   // 형식 변환(charx↔png↔json 재조립)
+import { cardAssetBytes } from '../../core/card/cardAssets.js';             // 변환용 getBytes — 에셋 지연 복호
 import { diagnoseLorebook } from '../../core/lorebook/diagnose.js';
 import { simulateActivation } from '../../core/lorebook/activate.js';
 import { estimateLorebookTokens, estimateEntryTokens } from '../../core/lorebook/tokens.js';
@@ -40,6 +42,7 @@ const THEME_KEY = 'lb-theme';
 let chips: any[] = [];
 let currentId: string | null = null;
 let parsed: any = null;
+let srcFormat = '';   // 원본 바이트 매직('png'|'charx'|'jpeg'|'risum'|'json') — 폴리글랏은 parsed.format과 다름(변환 버튼 판별용)
 let lore: any = null;
 let parseError = '';
 let selectedUid = '';
@@ -270,6 +273,10 @@ async function selectChip(id: string) {
   await new Promise((r) => setTimeout(r, 16));
   try {
     const bytes = await chip.read();
+    srcFormat = bytes[0] === 0x89 && bytes[1] === 0x50 ? 'png'
+      : bytes[0] === 0x50 && bytes[1] === 0x4b ? 'charx'
+      : bytes[0] === 0xff && bytes[1] === 0xd8 ? 'jpeg'
+      : bytes[0] === 0x6f ? 'risum' : 'json';
     parsed = parseCard(bytes, chip.name, { lazy: true });
     try { draftKey = 'lb-draft-' + (await sha256Hex(bytes)); } catch (_) { draftKey = ''; }   // 파일 지문 → 초안 키
     lore = extractLorebook(parsed.card || parsed);
@@ -899,6 +906,17 @@ function openExportModal() {
   hero.innerHTML = '<b>원본 형식으로 저장</b><small>.charx · .png · .jpeg · .json · .risum — 리스에서 카드만 바꾸면 끝</small>';
   hero.onclick = wrap(exportRepacked);
   body.appendChild(hero);
+  // 형식 변환 — 봇카드만(모듈·로어북 파일은 원본 그대로만). 원본과 같은 형식은 히어로가 담당하므로 숨김.
+  if (lore.kind === 'card') {
+    const formats = (['charx', 'png', 'json'] as const).filter((f) => f !== srcFormat);
+    if (formats.length) {
+      const row = document.createElement('div');
+      row.className = 'export-formats';
+      row.appendChild(span('fmt-label', '다른 형식으로:'));
+      formats.forEach((f) => row.appendChild(button('.' + f, wrap(() => exportAs(f)))));
+      body.appendChild(row);
+    }
+  }
   const grid = document.createElement('div');
   grid.className = 'export-grid';
   grid.append(
@@ -963,25 +981,64 @@ function exportBaseName() {
   const chip = chips.find((c) => c.id === currentId);
   return safeName(lore?.bookName || parsed?.name || chip?.name || 'lorebook');
 }
+// 내보내기 공용 — 표시 상태(번역·추가 키·편집) 병합이 끝난 최종 엔트리.
+function exportEntries() {
+  const tr = showTranslated ? translations : null;
+  return effLore().entries.map((e: any) => (e.isFolder ? e : {
+    ...e,
+    name: tr && tr[e.uid] && tr[e.uid].name ? tr[e.uid].name : e.name,
+    content: tr && tr[e.uid] && tr[e.uid].content ? tr[e.uid].content : e.content,
+    keys: mergedKeys(e, keyAdds),
+  }));
+}
 // 원본 형식 내보내기 — 원본 바이트에서 카드 JSON만 수술 교체(에셋·그림·메타 바이트 보존).
 async function exportRepacked() {
   const chip = chips.find((c) => c.id === currentId);
   if (!chip || !lore || !parsed) return;
   try {
     const bytes = await chip.read();
-    const tr = showTranslated ? translations : null;
-    const finalEntries = effLore().entries.map((e: any) => (e.isFolder ? e : {
-      ...e,
-      name: tr && tr[e.uid] && tr[e.uid].name ? tr[e.uid].name : e.name,
-      content: tr && tr[e.uid] && tr[e.uid].content ? tr[e.uid].content : e.content,
-      keys: mergedKeys(e, keyAdds),
-    }));
-    const json = applyLorebookToCard(parsed.card, lore.kind, finalEntries);
+    const json = applyLorebookToCard(parsed.card, lore.kind, exportEntries());
     const { bytes: out, ext } = repackCard(bytes, json);
     const base = safeName((chip.name || 'card').replace(/\.[^.]+$/, ''));
     downloadBlob(new Blob([out]), `${base}_수정.${ext}`);
     toast('원본 형식으로 저장했어요');
   } catch (e) { toast('저장 실패: ' + ((e && e.message) || e)); }
+}
+// 형식 변환 내보내기 — 원본과 다른 컨테이너로. JPEG 폴리글랏→charx는 zip만 잘라내는 수술(에셋 디코드 0),
+//   그 외엔 cardEncode 재조립(에셋은 cardAssetBytes로 필요한 것만 복호 — 에셋추출기2와 같은 배선).
+async function exportAs(format: 'charx' | 'png' | 'json') {
+  const chip = chips.find((c) => c.id === currentId);
+  if (!chip || !lore || !parsed) return;
+  setStatus(`.${format} 변환 중...`);
+  await new Promise((r) => setTimeout(r, 16));   // 상태줄이 먼저 그려지게(대형 카드 대비)
+  try {
+    const json = applyLorebookToCard(parsed.card, lore.kind, exportEntries());
+    const base = safeName((chip.name || 'card').replace(/\.[^.]+$/, ''));
+    let out: Uint8Array;
+    let mime = 'application/octet-stream';
+    if (format === 'charx' && srcFormat === 'jpeg') {
+      // 이름만 charx인 JPEG 폴리글랏 → 붙어 있는 zip 부분만 잘라 로어북 반영(진짜 charx를 얻는 지름길)
+      const bytes = await chip.read();
+      const zs = zipStartInBytes(bytes);
+      if (zs < 0) throw new Error('JPEG 안에서 카드(zip)를 찾지 못했습니다');
+      out = repackCharx(bytes.subarray(zs), json);
+      mime = 'application/zip';
+    } else {
+      const full = { ...parsed, card: JSON.parse(json) };
+      const gb = (a: any) => cardAssetBytes(parsed, a);
+      if (format === 'json') { out = encodeJson(full, gb); mime = 'application/json'; }
+      else if (format === 'charx') { out = encodeCharx(full, gb); mime = 'application/zip'; }
+      else {
+        const pb = pickPngBase(full, gb);
+        if (!pb) { setStatus(''); toast('이 카드엔 PNG로 쓸 이미지가 없어요'); return; }
+        out = encodePng(full, pb, gb);
+        mime = 'image/png';
+      }
+    }
+    downloadBlob(new Blob([out], { type: mime }), `${base}_수정.${format}`);
+    setStatus('');
+    toast(`.${format}로 저장했어요`);
+  } catch (e) { setStatus(''); toast('변환 실패: ' + ((e && e.message) || e)); }
 }
 function exportMarkdown() {
   downloadText(buildMarkdown(effLore(), showTranslated ? translations : null, 'tr', keyAdds), exportBaseName() + '.md');

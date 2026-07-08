@@ -6,7 +6,9 @@ const assert = require('assert');
 const fs = require('fs');
 const { unzipSync } = require('fflate');
 const { parseCard } = require('./parseCard.js');
-const { repackCard, rpackEncode, zipStartInBytes } = require('./repack.js');
+const { repackCard, repackCharx, rpackEncode, zipStartInBytes } = require('./repack.js');
+const { encodeJson, encodeCharx, encodePng, pickPngBase } = require('./cardEncode.js');
+const { cardAssetBytes } = require('./cardAssets.js');
 const { DECODE_MAP, rpackDecode } = require('./risum.js');
 const { extractLorebook } = require('../lorebook/normalize.js');
 const { applyLorebookToCard } = require('../lorebook/applyCard.js');
@@ -50,6 +52,64 @@ if (fs.existsSync(CHARX)) {
     assert.equal(p2.card.data.name, p.card.data.name);
   });
 } else console.log('  (charx 왕복 스킵 — 샘플 없음)');
+
+// ── 형식 변환(내보내기 포맷 선택 배선) — 샘플 = JPEG 폴리글랏 New_TSF ──
+if (fs.existsSync(CHARX)) {
+  const orig = new Uint8Array(fs.readFileSync(CHARX));
+  const p = parseCard(orig, 'New_TSF.charx', { lazy: true });
+  const lore = extractLorebook(p.card);
+  const entries = lore.entries.map((e, i) => (i === 0 ? { ...e, name: '변환 이름', content: '변환 본문' } : e));
+  const json = applyLorebookToCard(p.card, lore.kind, entries);
+  const gb = (a) => cardAssetBytes(p, a);
+  const reparse = (bytes, name) => extractLorebook(parseCard(bytes, name, { lazy: true }).card);
+
+  if (orig[0] === 0xff && orig[1] === 0xd8) {
+    ok('폴리글랏→charx 수술: PK 매직·로어북 반영·zip 엔트리 수 동일', () => {
+      const zs = zipStartInBytes(orig);
+      assert.ok(zs > 0);
+      const out = repackCharx(orig.subarray(zs), json);
+      assert.ok(out[0] === 0x50 && out[1] === 0x4b);   // 진짜 charx(zip)로 시작
+      const l2 = reparse(out, 'c.charx');
+      assert.equal(l2.entries.length, lore.entries.length);
+      assert.equal(l2.entries[0].name, '변환 이름');
+      assert.equal(Object.keys(unzipSync(out)).length, Object.keys(unzipSync(orig.subarray(zs))).length);
+    });
+  }
+  ok('charx 재조립(encodeCharx): 로어북 반영·에셋 전부 포함', () => {
+    const out = encodeCharx({ ...p, card: JSON.parse(json) }, gb);
+    assert.ok(out[0] === 0x50 && out[1] === 0x4b);
+    const p2 = parseCard(out, 'c2.charx', { lazy: true });
+    const l2 = extractLorebook(p2.card);
+    assert.equal(l2.entries[0].content, '변환 본문');
+    assert.equal(p2.assets.length, p.assets.length);
+    assert.ok(p2.assets.every((a) => a.found));
+  });
+  ok('png 변환(encodePng): 베이스 없으면 null 가드·있으면 ccv3 재파싱', () => {
+    // New_TSF 에셋은 ext=png 거짓말(실제 RIFF/WebP) → 베이스 불가 = null(UI가 toast로 안내하는 경로)
+    assert.equal(pickPngBase(p, gb), null);
+    // 합성 최소 PNG(sig+IHDR+IEND — 청크 구조만 유효하면 됨)를 베이스로 인코딩 자체를 검증
+    const be = (n) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n); return b; };
+    const s = (t) => Uint8Array.from(t, (c) => c.charCodeAt(0));
+    const base = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      ...be(13), ...s('IHDR'), ...new Uint8Array(13), 0, 0, 0, 0,
+      ...be(0), ...s('IEND'), 0, 0, 0, 0]);
+    const out = encodePng({ ...p, card: JSON.parse(json) }, base, gb);
+    assert.ok(out[0] === 0x89 && out[1] === 0x50);
+    const p2 = parseCard(out, 'c.png', { lazy: true });
+    const l2 = extractLorebook(p2.card);
+    assert.equal(l2.entries[0].name, '변환 이름');
+    assert.equal(p2.assets.length, p.assets.length);
+    assert.ok(p2.assets.every((a) => a.found));
+  });
+  ok('json 변환(encodeJson): data URI 인라인·로어북 반영', () => {
+    const out = encodeJson({ ...p, card: JSON.parse(json) }, gb);
+    const card = JSON.parse(Buffer.from(out).toString('utf8'));
+    assert.ok((card.data.assets || []).every((a) => /^data:/.test(a.uri)));
+    const l2 = reparse(out, 'c.json');
+    assert.equal(l2.entries.length, lore.entries.length);
+    assert.equal(l2.entries[0].name, '변환 이름');
+  });
+}
 
 // ── risum 왕복(실파일 있을 때만) ──
 const RISUM = 'C:/pro 1.2/캐릭터파일/모듈봇/오키 아오이(Oki Aoi).risum';
