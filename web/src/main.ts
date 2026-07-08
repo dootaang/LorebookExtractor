@@ -65,6 +65,7 @@ let edits: Record<string, any> = {};          // uid → 편집 필드(name·key
 let removedUids: Record<string, true> = {};   // 소프트 삭제(목록에 취소선+복구, 내보내기 제외)
 let addedEntries: any[] = [];                 // 새 엔트리(통일 스키마, raw 없음)
 let editingUid: string | null = null;         // 편집 폼이 열린 엔트리
+let selectedUids: Record<string, true> = {};  // 선택 모드 — 일괄 작업 대상(파일 전환 시 초기화, 초안 미포함)
 let fileHash = '';                            // 파일 sha256 — 서재 파일·초안(IDB) 공용 키
 let draftTimer: any = null;
 
@@ -258,6 +259,7 @@ function removeChip(id: string) {
     fileHash = '';
     lore = null;
     selectedUid = '';
+    selectedUids = {};
     parseError = '';
     translations = {};
     if (chips.length) {
@@ -301,7 +303,7 @@ async function selectChip(id: string) {
       if (fileHash) saveFile(fileHash, chip.name, bytes).catch((e) => console.warn('[library] 보관 실패', e));   // 자동 보관(해시 dedup)
       selectedUid = realEntries()[0]?.uid || '';
       statusText = `${chip.name}에서 로어북을 읽었습니다.`;
-      keyAdds = {}; edits = {}; removedUids = {}; addedEntries = []; editingUid = null;   // 파일 단위 상태 초기화
+      keyAdds = {}; edits = {}; removedUids = {}; addedEntries = []; editingUid = null; selectedUids = {};   // 파일 단위 상태 초기화
       glossaryRows = null;
       if (await loadDraft()) statusText = `${chip.name} — 저장된 작업(초안·번역)을 복원했어요.`;
       refreshIssueMap();
@@ -334,12 +336,17 @@ function filteredEntries() {
   return list;
 }
 function groupsForList() {
-  const visible = new Set(filteredEntries().map((e: any) => e.uid));
-  const groups = groupByFolder(lore.entries)
-    .map((g: any) => ({ folder: g.folder, items: g.items.filter((e: any) => visible.has(e.uid)) }))
+  // 편집 병합(eff)본으로 그룹핑 + 그룹 안 순서 = 정렬 모드 반영(배치 순서 이동이 목록에 바로 보이게).
+  const seq = filteredEntries();
+  const pos = new Map(seq.map((e: any, i: number) => [e.uid, i]));
+  const groups = groupByFolder(effLore().entries)
+    .map((g: any) => ({
+      folder: g.folder,
+      items: g.items.filter((e: any) => pos.has(e.uid)).sort((a: any, b: any) => pos.get(a.uid) - pos.get(b.uid)),
+    }))
     .filter((g: any) => g.items.length);
   const known = new Set(groups.flatMap((g: any) => g.items.map((e: any) => e.uid)));
-  const missed = filteredEntries().filter((e: any) => !known.has(e.uid));
+  const missed = seq.filter((e: any) => !known.has(e.uid));
   if (missed.length) groups.unshift({ folder: null, items: missed });
   return groups;
 }
@@ -588,7 +595,7 @@ function buildEntryList() {
   head.append(filterSel, sortSel);
   panel.appendChild(head);
   const scroll = document.createElement('div');
-  scroll.className = 'list-scroll';
+  scroll.className = 'list-scroll' + (selCount() ? ' selecting' : '');
   const groups = groupsForList();
   if (!groups.length) scroll.appendChild(div('empty-reader', '검색 결과가 없습니다.'));
   for (const g of groups) {
@@ -635,9 +642,158 @@ function deleteEntry(e: any) {
   if (e.raw) removedUids[e.uid] = true;
   else addedEntries = addedEntries.filter((x) => x.uid !== e.uid);
   if (editingUid === e.uid) editingUid = null;
+  delete selectedUids[e.uid];
   glossaryRows = null; refreshIssueMap(); saveDraft();
   statusText = '삭제 예정으로 옮겼어요 — 목록 맨 아래에서 복구할 수 있어요.';
   renderBody();
+}
+// ── 선택 모드 + 일괄 작업(편집기 1군) — 전부 오버레이라 원본 불변 ──────────
+function selCount() { return Object.keys(selectedUids).length; }
+function selEntries() { return realEntries().filter((e: any) => selectedUids[e.uid]); }
+function toggleSelect(uid: string) {
+  if (selectedUids[uid]) delete selectedUids[uid]; else selectedUids[uid] = true;
+  renderBody();
+}
+function clearSelection() { selectedUids = {}; renderBody(); }
+// 오버레이 패치: raw 엔트리 = edits 부분 병합(eff가 원본 위에 얹음), 새 엔트리 = 직접 수정.
+function patchEntry(e: any, patch: any) {
+  if (!e.raw) { const t = addedEntries.find((x) => x.uid === e.uid); if (t) Object.assign(t, patch); }
+  else edits[e.uid] = { ...(edits[e.uid] || {}), ...patch };
+}
+function bulkPatch(patch: any, msg: string) {
+  const list = selEntries();
+  if (!list.length) return;
+  for (const e of list) patchEntry(e, patch);
+  glossaryRows = null; refreshIssueMap(); saveDraft();
+  statusText = `${list.length}개 엔트리 — ${msg}.`;
+  renderBody();
+}
+function bulkDelete() {
+  const list = selEntries();
+  if (!list.length) return;
+  if (!confirm(`선택한 ${list.length}개 엔트리를 삭제 예정으로 옮길까요?`)) return;
+  for (const e of list) {
+    if (e.raw) removedUids[e.uid] = true;
+    else addedEntries = addedEntries.filter((x) => x.uid !== e.uid);
+    if (editingUid === e.uid) editingUid = null;
+  }
+  selectedUids = {};
+  glossaryRows = null; refreshIssueMap(); saveDraft();
+  statusText = `${list.length}개를 삭제 예정으로 옮겼어요 — 목록 맨 아래에서 복구할 수 있어요.`;
+  renderBody();
+}
+// 엔트리 복제 — 현재(편집 병합) 상태 그대로 새 엔트리로, 배치 순서상 원본 바로 뒤에.
+//   원본 order가 유일하면 +0.5(다른 엔트리 무변경), 동률이 있으면 전체 배치 순서를 일련번호로 재부여하며 끼움.
+function duplicateEntry(e: any) {
+  const src = eff(e);
+  const u = 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const dup = {
+    uid: u, name: (src.name || '(이름 없음)') + ' (복사)', keys: src.keys.slice(), secondaryKeys: src.secondaryKeys.slice(),
+    content: src.content, enabled: src.enabled !== false, constant: !!src.constant, selective: !!src.selective,
+    useRegex: !!src.useRegex, order: (src.order || 0) + 0.5, position: src.position || '', folder: src.folder || '', isFolder: false, raw: null,
+  };
+  const collision = realEntries().some((x: any) => x.uid !== src.uid && (x.order || 0) === (src.order || 0));
+  addedEntries.push(dup);
+  if (collision) {
+    const seq = realEntries().slice().sort((a: any, b: any) => (a.order || 0) - (b.order || 0)).filter((x: any) => x.uid !== u);
+    seq.splice(seq.findIndex((x: any) => x.uid === src.uid) + 1, 0, dup);
+    seq.forEach((x: any, k: number) => { if ((x.order || 0) !== k) patchEntry(x, { order: k }); });
+  }
+  selectedUid = u; editingUid = u;
+  glossaryRows = null; refreshIssueMap(); saveDraft();
+  statusText = '복제했어요 — 새 엔트리로 추가됩니다.';
+  renderBody();
+}
+// 배치 순서 이동 — 이웃과 order 스왑(오버레이). 동률이면 전체를 일련번호로 재부여 후 스왑.
+function moveEntry(e: any, dir: number) {
+  const sorted = () => realEntries().slice().sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
+  let list = sorted();
+  const i = list.findIndex((x: any) => x.uid === e.uid);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  if ((list[i].order || 0) === (list[j].order || 0)) {
+    list.forEach((x: any, k: number) => { if ((x.order || 0) !== k) patchEntry(x, { order: k }); });
+    list = sorted();
+  }
+  const ao = list[i].order || 0, bo = list[j].order || 0;
+  patchEntry(list[i], { order: bo });
+  patchEntry(list[j], { order: ao });
+  saveDraft();
+  renderBody();
+}
+// 검색&치환 — 본문·이름만(활성화 키·두번째 키는 발동 조건이라 불변). 실행 전 일치 수 미리보기, 결과는 edits 오버레이.
+function openReplaceModal() {
+  const ov = document.createElement('div');
+  ov.className = 'modal';
+  const close = () => ov.remove();
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  const panel = document.createElement('div');
+  panel.className = 'settings-panel replace-panel';
+  const head = document.createElement('div');
+  head.className = 'settings-head';
+  head.innerHTML = '<h2>검색&치환</h2>';
+  head.appendChild(button('닫기', close));
+  panel.appendChild(head);
+  const body = document.createElement('div');
+  body.className = 'settings-body';
+  const info = document.createElement('p');
+  info.className = 'panel-note';
+  info.textContent = '전 엔트리의 본문·이름을 바꿔요. 활성화 키·두번째 키는 발동 조건이라 건드리지 않아요. 결과는 초안으로 저장됩니다.';
+  body.appendChild(info);
+  const find = inputEl('');
+  const repl = inputEl('');
+  const useRe = checkEl(false);
+  body.append(
+    fieldRow(field('찾기', find), field('바꾸기', repl)),
+    field('정규식', labelWrap(useRe, '정규식으로 찾기($1 역참조 가능)')),
+  );
+  const preview = div('replace-preview', '찾을 내용을 입력하세요.');
+  body.appendChild(preview);
+  const buildRe = () => {
+    const q = find.value;
+    if (!q) return null;
+    try { return new RegExp(useRe.checked ? q : q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'); }
+    catch (_) { return 'err'; }
+  };
+  const refreshPreview = () => {
+    const re = buildRe();
+    if (!re) { preview.textContent = '찾을 내용을 입력하세요.'; preview.classList.remove('err'); return; }
+    if (re === 'err') { preview.textContent = '정규식 오류 — 패턴을 확인하세요.'; preview.classList.add('err'); return; }
+    let ents = 0, hits = 0;
+    for (const e of realEntries()) {
+      const n = ((e.name || '').match(re) || []).length + ((e.content || '').match(re) || []).length;
+      if (n) { ents++; hits += n; }
+    }
+    preview.classList.remove('err');
+    preview.textContent = hits ? `엔트리 ${ents}개에서 ${hits}곳 일치` : '일치하는 곳이 없어요.';
+  };
+  find.oninput = refreshPreview;
+  useRe.onchange = refreshPreview;
+  const acts = document.createElement('div');
+  acts.className = 'reader-actions';
+  acts.appendChild(button('모두 바꾸기', () => {
+    const re = buildRe();
+    if (!re || re === 'err') { refreshPreview(); return; }
+    const rv = useRe.checked ? repl.value : repl.value.replace(/\$/g, '$$$$');   // 리터럴 모드에선 $도 글자 그대로
+    let changed = 0;
+    for (const e of realEntries()) {
+      const name2 = (e.name || '').replace(re, rv);
+      const content2 = (e.content || '').replace(re, rv);
+      if (name2 === e.name && content2 === e.content) continue;
+      patchEntry(e, { name: name2, content: content2 });
+      delete translations[e.uid];   // 원문이 바뀌었으니 옛 번역은 무효
+      changed++;
+    }
+    if (!changed) { toast('일치하는 곳이 없어요'); return; }
+    close();
+    glossaryRows = null; refreshIssueMap(); saveDraft();
+    statusText = `치환 완료 — ${changed}개 엔트리(초안 자동 보존).`;
+    renderBody();
+  }, 'primary'));
+  body.appendChild(acts);
+  panel.appendChild(body);
+  ov.appendChild(panel);
+  document.body.appendChild(ov);
 }
 function saveEdit(e: any, f: any) {
   const fields = {
@@ -674,6 +830,11 @@ function entryRow(e: any) {
   row.append(span('entry-title', displayName(e)));
   const meta = document.createElement('span');
   meta.className = 'entry-meta';
+  // 선택 체크(호버 노출·선택 중엔 상시) — 일괄 작업 대상 지정
+  const chk = span('sel-check' + (selectedUids[e.uid] ? ' checked' : ''), selectedUids[e.uid] ? '✓' : '');
+  chk.title = '선택 — 일괄 작업';
+  chk.onclick = (ev: any) => { ev.stopPropagation(); toggleSelect(e.uid); };
+  meta.appendChild(chk);
   const sev = issueSevByUid[e.uid];
   if (sev) { const w = span('issue-dot ' + sev, ''); w.title = '진단 탭에서 확인할 문제가 있어요'; meta.appendChild(w); }
   if (edits[e.uid] || !e.raw) { const d = span('edit-dot', '✎'); d.title = edits[e.uid] ? '편집됨' : '새 엔트리'; meta.appendChild(d); }
@@ -763,8 +924,13 @@ function buildReader() {
   acts.className = 'reader-actions';
   const rawBtn = button(mdRaw ? '렌더 보기' : '원문 보기', () => { mdRaw = !mdRaw; renderBody(); }, 'ghost');
   rawBtn.title = '마크다운 렌더 ↔ 원문 그대로';
+  const up = button('↑', () => moveEntry(e, -1), 'ghost');
+  up.title = '배치 순서 위로';
+  const dn = button('↓', () => moveEntry(e, +1), 'ghost');
+  dn.title = '배치 순서 아래로';
   acts.append(
     button('편집', () => { editingUid = e.uid; renderBody(); }),
+    up, dn,
     button('본문 복사', () => copyText(split.body || content)),
     button('Markdown 복사', () => copyText(entryMarkdown(e))),
     rawBtn,
@@ -816,6 +982,7 @@ function buildEditForm(e: any) {
     button('취소', () => { editingUid = null; renderBody(); }),
   );
   if (e.raw && edits[e.uid]) acts.appendChild(button('원본으로 되돌리기', () => { delete edits[e.uid]; delete translations[e.uid]; editingUid = null; glossaryRows = null; refreshIssueMap(); saveDraft(); renderBody(); }));
+  acts.appendChild(button('복제', () => duplicateEntry(e)));
   acts.appendChild(button('이 엔트리 삭제', () => deleteEntry(e)));
   work.append(meta, toggles, f.content, acts);
   return work;
@@ -1014,6 +1181,23 @@ function exportCard(title: string, desc: string, onClick: any) {
 function buildBottomActions() {
   const bar = document.createElement('section');
   bar.className = 'bottom-actions';
+  // 선택 중 = 하단바가 선택 액션바로 전환(범위가 형태로 드러남)
+  if (selCount()) {
+    bar.classList.add('selecting');
+    bar.append(
+      span('sel-count', `${selCount()}개 선택`),
+      button('활성', () => bulkPatch({ enabled: true }, '활성')),
+      button('비활성', () => bulkPatch({ enabled: false }, '비활성')),
+      button('언제나 활성화 켬', () => bulkPatch({ constant: true }, '언제나 활성화 켬')),
+      button('언제나 활성화 끔', () => bulkPatch({ constant: false }, '언제나 활성화 끔')),
+      button('번역', () => translateEntries(selEntries()), 'primary'),
+      button('활성화 키 추가', () => openArmModal(selEntries())),
+      button('삭제', bulkDelete),
+      button('선택 해제', clearSelection, 'ghost'),
+    );
+    bar.appendChild(span('status', translating ? '번역 중...' : statusText));
+    return bar;
+  }
   const toggle = document.createElement('label');
   toggle.className = 'toggle';
   const cb = document.createElement('input');
@@ -1024,7 +1208,8 @@ function buildBottomActions() {
   bar.appendChild(toggle);
   bar.append(
     button('전체 번역', () => translateEntries(realEntries()), 'primary'),
-    button('활성화 키 번역 추가', openArmModal),
+    button('활성화 키 번역 추가', () => openArmModal()),
+    button('검색&치환', openReplaceModal),
   );
   if (hasDraftState()) {
     const d = button('초안 버리기', () => { if (confirm('편집·추가 키 초안을 모두 버리고 원본으로 되돌릴까요?')) discardDraft(); }, 'ghost');
@@ -1234,11 +1419,11 @@ const KEY_ARM_PROMPT = (lang: string) =>
   `반드시 쉼표로 구분해 같은 개수·같은 순서로만 출력하고, 설명·번호·다른 말은 붙이지 마세요. ` +
   `인명·지명 같은 고유명사는 ${lang} 관용 표기(음차)로 적으세요.`;
 
-async function armKeys(lang: string) {
+async function armKeys(lang: string, scope?: any[]) {
   if (translating) return;
   try { await ensureTranslateReady(); }
   catch (e) { toast(e.message || String(e)); settingsOpen = true; render(); return; }
-  const targets = realEntries().filter((e: any) => e.keys.length && !e.useRegex);
+  const targets = (Array.isArray(scope) && scope.length ? scope : realEntries()).filter((e: any) => e.keys.length && !e.useRegex);
   if (!targets.length) { toast('번역할 활성화 키가 없어요(정규식 키 엔트리는 제외).'); return; }
   const jobs = targets.map((e: any) => ({ uid: e.uid, field: 'keys:' + lang, text: e.keys.join(', ') }));
   translating = true;
@@ -1272,7 +1457,8 @@ async function armKeys(lang: string) {
   renderBody();
 }
 
-function openArmModal() {
+function openArmModal(scope?: any[]) {
+  const scoped = Array.isArray(scope) && scope.length ? scope : null;
   const ov = document.createElement('div');
   ov.className = 'modal';
   const close = () => ov.remove();
@@ -1288,14 +1474,15 @@ function openArmModal() {
   body.className = 'settings-body';
   const info = document.createElement('p');
   info.className = 'panel-note';
-  info.textContent = '원본 키는 그대로 두고 선택한 언어의 번역 키를 추가해요. 내보내서 리스에 넣으면 그 언어 채팅에서도 발동합니다.';
+  info.textContent = (scoped ? `선택한 ${scoped.length}개 엔트리 대상. ` : '')
+    + '원본 키는 그대로 두고 선택한 언어의 번역 키를 추가해요. 내보내서 리스에 넣으면 그 언어 채팅에서도 발동합니다.';
   body.appendChild(info);
   const langSel = selectEl([['일본어', '일본어'], ['한국어', '한국어'], ['영어', '영어'], ['중국어', '중국어']], '일본어');
   body.appendChild(field('추가할 키 언어', langSel, '정규식 키는 제외, 같은 키는 중복 추가 안 됨.'));
   const armedNow = Object.values(keyAdds).reduce((n, a) => n + a.length, 0);
   const acts = document.createElement('div');
   acts.className = 'reader-actions';
-  acts.appendChild(button('무장 시작', () => { close(); armKeys(langSel.value); }, 'primary'));
+  acts.appendChild(button('무장 시작', () => { close(); armKeys(langSel.value, scoped || undefined); }, 'primary'));
   if (armedNow) acts.appendChild(button(`추가 키 모두 지우기 (${armedNow}개)`, () => { keyAdds = {}; saveDraft(); close(); statusText = '추가 키를 모두 지웠어요.'; renderBody(); }));
   body.appendChild(acts);
   panel.appendChild(body);
