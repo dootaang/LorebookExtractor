@@ -9,7 +9,7 @@
   "scripts": {
     "web:build": "esbuild web/src/main.ts --bundle --format=iife --outfile=web/dist/main.js",
     "web:dev": "esbuild web/src/main.ts --bundle --format=iife --outfile=web/dist/main.js --servedir=web --serve=8134 --watch=forever",
-    "test": "node core/lorebook/normalize.test.js && node core/lorebook/analysis.test.js && node core/lorebook/mdlite.test.js && node core/lorebook/glossary.test.js"
+    "test": "node core/lorebook/normalize.test.js && node core/lorebook/analysis.test.js && node core/lorebook/mdlite.test.js && node core/lorebook/glossary.test.js && node core/card/repack.test.js"
   },
   "dependencies": {
     "fflate": "^0.8.3"

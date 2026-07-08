@@ -350,6 +350,17 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent2); }
 .chip-label.added-label { color: var(--ok); }
 .arm-panel { width: min(520px, 96vw); }
 /* 용어집 — 표기 쌍 목록 */
+/* 라이트 편집 */
+.edit-dot { color: var(--accent); font-size: 11px; line-height: 1; }
+.entry-row.removed { opacity: .55; display: flex; justify-content: space-between; align-items: center; cursor: default; }
+.entry-row.removed .entry-title { text-decoration: line-through; text-decoration-color: var(--dim); }
+.restore-btn { font-size: 12px; padding: 3px 9px; flex: 0 0 auto; }
+.add-entry { width: 100%; margin-top: 6px; border-style: dashed; color: var(--dim); }
+.add-entry:hover { color: var(--accent); border-color: var(--accent); }
+.edit-sheet .edit-body { padding: 18px 30px 26px; }
+.edit-content { min-height: 300px; resize: vertical; font-size: 14.5px; line-height: 1.65; width: 100%; }
+.edit-toggles { display: flex; flex-wrap: wrap; gap: 14px; }
+.edit-acts { margin-top: 12px; }
 .gloss-list { display: grid; gap: 4px; }
 .gloss-row {
   display: grid;
