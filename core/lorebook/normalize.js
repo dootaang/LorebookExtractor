@@ -171,17 +171,17 @@ function buildCharacterBook(lore, tr, nameMode, keyAdd) {
 function buildMarkdown(lore, tr, nameMode, keyAdd) {
   const out = [`# ${lore.bookName || '로어북'}`, ''];
   const st = loreStats(lore.entries);
-  out.push(`> 엔트리 ${st.total}개 · 상시활성 ${st.constant}개 · 약 ${Math.round(st.chars / 1000)}천 글자`, '');
+  out.push(`> 엔트리 ${st.total}개 · 언제나 활성화 ${st.constant}개 · 약 ${Math.round(st.chars / 1000)}천 글자`, '');
   for (const g of groupByFolder(lore.entries)) {
     if (g.folder) out.push(`## 📁 ${g.folder.name || '(폴더)'}`, '');
     for (const e of g.items) {
       const v = pick(tr, e, nameMode);
-      const flags = [e.constant ? '상시활성' : '', e.enabled ? '' : '비활성', e.selective ? '2차키' : '', e.useRegex ? '정규식' : ''].filter(Boolean);
+      const flags = [e.constant ? '언제나 활성화' : '', e.enabled ? '' : '비활성', e.selective ? '멀티플 키' : '', e.useRegex ? '정규식' : ''].filter(Boolean);
       out.push(`### ${v.name || e.keys[0] || '(이름 없음)'}`);
-      if (e.keys.length) out.push(`- 키워드: ${e.keys.join(', ')}`);
+      if (e.keys.length) out.push(`- 활성화 키: ${e.keys.join(', ')}`);
       const extra = keyAdd && Array.isArray(keyAdd[e.uid]) ? keyAdd[e.uid] : [];
-      if (extra.length) out.push(`- 추가 발동 키: ${extra.join(', ')}`);
-      if (e.secondaryKeys.length) out.push(`- 2차 키워드: ${e.secondaryKeys.join(', ')}`);
+      if (extra.length) out.push(`- 추가 활성화 키: ${extra.join(', ')}`);
+      if (e.secondaryKeys.length) out.push(`- 두번째 키: ${e.secondaryKeys.join(', ')}`);
       if (flags.length) out.push(`- 속성: ${flags.join(' · ')}`);
       out.push('', v.content, '');
     }

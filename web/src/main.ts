@@ -393,7 +393,7 @@ function buildSummary() {
   bar.appendChild(title);
   bar.append(
     statPair(String(st.total), '엔트리'),
-    statPair(String(st.constant), '상시활성'),
+    statPair(String(st.constant), '언제나 활성화'),
     ...(st.disabled ? [statPair(String(st.disabled), '비활성')] : []),
     statPair(fmtChars(st.chars), '자'),
     statPair('~' + tinyTok(tk.total), '토큰'),
@@ -420,11 +420,11 @@ function buildEntryList() {
   const head = document.createElement('div');
   head.className = 'list-head';
   const filterSel = document.createElement('select');
-  [['all', '전체'], ['constant', '상시활성'], ['conditional', '조건부'], ['disabled', '비활성']].forEach(([v, t]) => filterSel.appendChild(new Option(t, v)));
+  [['all', '전체'], ['constant', '언제나 활성화'], ['conditional', '조건부'], ['disabled', '비활성']].forEach(([v, t]) => filterSel.appendChild(new Option(t, v)));
   filterSel.value = filter;
   filterSel.onchange = () => { filter = filterSel.value as FilterMode; renderBody(); };
   const sortSel = document.createElement('select');
-  [['order', '원래 순서'], ['name', '이름순'], ['length', '본문 긴순']].forEach(([v, t]) => sortSel.appendChild(new Option(t, v)));
+  [['order', '배치 순서'], ['name', '이름순'], ['length', '본문 긴순']].forEach(([v, t]) => sortSel.appendChild(new Option(t, v)));
   sortSel.value = sort;
   sortSel.onchange = () => { sort = sortSel.value as SortMode; renderBody(); };
   head.append(filterSel, sortSel);
@@ -466,7 +466,7 @@ function entryRow(e: any) {
     e.keys.slice(0, 3).forEach((k: string) => chipsRow.appendChild(span('keychip mini', k)));
     if (e.keys.length > 3) chipsRow.appendChild(span('keychip mini more', '+' + (e.keys.length - 3)));
   } else {
-    chipsRow.appendChild(span('entry-nokey', e.constant ? '항상 발동' : '키워드 없음'));
+    chipsRow.appendChild(span('entry-nokey', e.constant ? '언제나 활성화' : '활성화 키 없음'));
   }
   row.appendChild(chipsRow);
   return row;
@@ -520,7 +520,7 @@ function buildReader() {
   title.appendChild(h);
   const badges = document.createElement('div');
   badges.className = 'entry-flags';
-  if (e.constant) badges.appendChild(span('badge constant', '상시활성'));
+  if (e.constant) badges.appendChild(span('badge constant', '언제나 활성화'));
   if (!e.enabled) badges.appendChild(span('badge disabled', '비활성'));
   if (e.useRegex) badges.appendChild(span('badge regex', '정규식'));
   title.appendChild(badges);
@@ -529,18 +529,18 @@ function buildReader() {
   const keyline = document.createElement('div');
   keyline.className = 'chipline';
   if (e.keys.length) {
-    keyline.appendChild(span('chip-label', '발동 키워드'));
+    keyline.appendChild(span('chip-label', '활성화 키'));
     e.keys.forEach((k: string) => keyline.appendChild(span('keychip', k)));
   }
   if (keyAdds[e.uid] && keyAdds[e.uid].length) {
-    keyline.appendChild(span('chip-label added-label', '+ 추가 발동 키'));
+    keyline.appendChild(span('chip-label added-label', '+ 추가 활성화 키'));
     keyAdds[e.uid].forEach((k: string) => keyline.appendChild(span('keychip added', k)));
   }
   if (e.secondaryKeys.length) {
-    keyline.appendChild(span('chip-label', '+ 2차 조건'));
+    keyline.appendChild(span('chip-label', '+ 두번째 키'));
     e.secondaryKeys.forEach((k: string) => keyline.appendChild(span('keychip second', k)));
   }
-  if (!e.keys.length && !e.secondaryKeys.length) keyline.appendChild(span('chip-label', e.constant ? '키워드 없이 항상 포함되는 설정' : '발동 키워드 없음'));
+  if (!e.keys.length && !e.secondaryKeys.length) keyline.appendChild(span('chip-label', e.constant ? '활성화 키 없이 언제나 포함되는 설정' : '활성화 키 없음'));
   head.appendChild(keyline);
   if (split.decorators.length) {
     const deco = document.createElement('div');
@@ -605,7 +605,7 @@ function buildDiagnoseView() {
     stat(`주의 ${report.counts.warning}`),
     stat(`참고 ${report.counts.info}`),
     stat(`전체 ${fmtChars(report.tokenStats.total)}토큰`),
-    stat(`상시 ${fmtChars(report.tokenStats.constant)}토큰`),
+    stat(`언제나 활성화 ${fmtChars(report.tokenStats.constant)}토큰`),
   );
   body.appendChild(summary);
   if (!report.issues.length) {
@@ -670,7 +670,7 @@ function buildActivateView() {
     result.tokenBudget ? stat(`예산 ${fmtChars(result.budgetUsed)}/${fmtChars(result.tokenBudget)}`) : stat('예산 없음'),
   );
   body.appendChild(summary);
-  if (result.budgetDropped.length) body.appendChild(div('budget-warning', `토큰 예산 때문에 ${result.budgetDropped.length}개 엔트리가 밀릴 수 있습니다.`));
+  if (result.budgetDropped.length) body.appendChild(div('budget-warning', `로어북 최대 토큰 때문에 ${result.budgetDropped.length}개 엔트리가 밀릴 수 있습니다.`));
   body.appendChild(buildActivationList('발동된 엔트리', result.active, true));
   body.appendChild(buildActivationList('미발동 엔트리', result.inactive, false));
   return body;
@@ -702,15 +702,15 @@ function buildActivationList(title: string, rows: any[], active: boolean) {
 
 function reasonText(r: any) {
   const map: Record<string, string> = {
-    constant: '상시활성',
+    constant: '언제나 활성화',
     primary: `키워드: ${r.key}`,
     primary_secondary: `키+2차키: ${r.key} + ${r.secondaryKey}`,
     regex: `정규식: ${r.key}`,
     disabled: '비활성',
     no_keys: '키워드 없음',
     primary_missing: '1차 키 불일치',
-    secondary_missing: '2차 키 불일치',
-    secondary_missing_config: '2차 키 설정 없음',
+    secondary_missing: '두번째 키 불일치',
+    secondary_missing_config: '두번째 키 설정 없음',
     invalid_regex: '정규식 오류',
   };
   return map[r.reason] || r.detail || r.reason || '';
@@ -758,7 +758,7 @@ function buildBottomActions() {
   bar.appendChild(toggle);
   bar.append(
     button('전체 번역', () => translateEntries(realEntries()), 'primary'),
-    button('발동 키 무장', openArmModal),
+    button('활성화 키 번역 추가', openArmModal),
     button('전체 복사', () => copyText(buildMarkdown(lore, showTranslated ? translations : null, 'tr', keyAdds))),
     button('Markdown 저장', () => exportMarkdown()),
     button('CCv3 JSON 저장', () => exportCharacterBook()),
@@ -774,9 +774,9 @@ function entryMarkdown(e: any) {
   const name = v.name || e.name || e.keys[0] || '(이름 없음)';
   const content = v.content || e.content || '';
   const lines = [`### ${name}`];
-  if (e.keys.length) lines.push(`- 키워드: ${e.keys.join(', ')}`);
-  if (keyAdds[e.uid] && keyAdds[e.uid].length) lines.push(`- 추가 발동 키: ${keyAdds[e.uid].join(', ')}`);
-  if (e.secondaryKeys.length) lines.push(`- 2차 키워드: ${e.secondaryKeys.join(', ')}`);
+  if (e.keys.length) lines.push(`- 활성화 키: ${e.keys.join(', ')}`);
+  if (keyAdds[e.uid] && keyAdds[e.uid].length) lines.push(`- 추가 활성화 키: ${keyAdds[e.uid].join(', ')}`);
+  if (e.secondaryKeys.length) lines.push(`- 두번째 키: ${e.secondaryKeys.join(', ')}`);
   lines.push('', content);
   return lines.join('\n');
 }
@@ -904,7 +904,7 @@ function buildGlossaryView() {
 //   원본 키는 절대 대체하지 않고 번역 키를 "추가"만(중복 제거) → 내보내기(CCv3/MD)에 반영 → 리스에 되넣으면
 //   그 언어 채팅에서도 발동. 정규식 키 엔트리는 제외(패턴 번역=파손 위험).
 const KEY_ARM_PROMPT = (lang: string) =>
-  `입력은 로어북 발동 키워드 목록(쉼표 구분)입니다. 각 키워드를 ${lang} 채팅에서 실제로 쓸 법한 표현으로 번역하세요. ` +
+  `입력은 로어북 활성화 키 목록(쉼표 구분)입니다. 각 키워드를 ${lang} 채팅에서 실제로 쓸 법한 표현으로 번역하세요. ` +
   `반드시 쉼표로 구분해 같은 개수·같은 순서로만 출력하고, 설명·번호·다른 말은 붙이지 마세요. ` +
   `인명·지명 같은 고유명사는 ${lang} 관용 표기(음차)로 적으세요.`;
 
@@ -913,17 +913,17 @@ async function armKeys(lang: string) {
   try { await ensureTranslateReady(); }
   catch (e) { toast(e.message || String(e)); settingsOpen = true; render(); return; }
   const targets = realEntries().filter((e: any) => e.keys.length && !e.useRegex);
-  if (!targets.length) { toast('번역할 발동 키워드가 없어요(정규식 키 엔트리는 제외).'); return; }
+  if (!targets.length) { toast('번역할 활성화 키가 없어요(정규식 키 엔트리는 제외).'); return; }
   const jobs = targets.map((e: any) => ({ uid: e.uid, field: 'keys:' + lang, text: e.keys.join(', ') }));
   translating = true;
-  statusText = '발동 키 번역 준비 중...';
+  statusText = '활성화 키 번역 준비 중...';
   renderBody();
   try {
     const res = await translateJobs(jobs, {
       stylePrompt: KEY_ARM_PROMPT(lang),
       targetLang: lang,
       skipKorean: false,   // 한국어 키도 대상(예: 한국어 키 → 일본어 무장)
-      onProgress: (d: number, t: number) => { statusText = `발동 키 번역 중 ${d}/${t}`; renderBody(); },
+      onProgress: (d: number, t: number) => { statusText = `활성화 키 번역 중 ${d}/${t}`; renderBody(); },
     });
     let added = 0, armed = 0;
     res.blocks.forEach((text: any, i: number) => {
@@ -936,11 +936,11 @@ async function armKeys(lang: string) {
       if (fresh.length) { keyAdds[e.uid] = (keyAdds[e.uid] || []).concat(fresh); added += fresh.length; armed++; }
     });
     statusText = added
-      ? `발동 키 무장 — ${armed}개 엔트리에 ${lang} 키 ${added}개 추가`
+      ? `활성화 키 번역 추가 — ${armed}개 엔트리에 ${lang} 키 ${added}개 추가`
       : '추가할 새 키가 없었어요.';
     // 실패 사유를 삼키지 않는다 — 전멸(키·모델·CORS 오류)의 원인을 사용자가 바로 보게.
     if (res.failed.length) statusText += ` · 실패 ${res.failed.length}: ${res.failed[0].error}`;
-  } catch (e) { statusText = '발동 키 번역 실패: ' + ((e && e.message) || e); }
+  } catch (e) { statusText = '활성화 키 번역 실패: ' + ((e && e.message) || e); }
   translating = false;
   renderBody();
 }
@@ -954,7 +954,7 @@ function openArmModal() {
   panel.className = 'settings-panel arm-panel';
   const head = document.createElement('div');
   head.className = 'settings-head';
-  head.innerHTML = '<h2>발동 키 다국어 무장</h2>';
+  head.innerHTML = '<h2>활성화 키 번역 추가</h2>';
   head.appendChild(button('닫기', close));
   panel.appendChild(head);
   const body = document.createElement('div');
