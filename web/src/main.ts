@@ -31,7 +31,7 @@ import {
 
 type FilterMode = 'all' | 'constant' | 'conditional' | 'disabled';
 type SortMode = 'order' | 'name' | 'length';
-type ReaderTab = 'read' | 'diagnose' | 'activate' | 'glossary' | 'export';
+type ReaderTab = 'read' | 'diagnose' | 'activate' | 'glossary';   // 전체 스코프 뷰(내보내기는 탭이 아니라 상단바 모달)
 
 const app = document.getElementById('app')!;
 const ACCEPT = '.charx,.png,.json,.jpeg,.jpg,.risum,.module.charx';
@@ -134,7 +134,7 @@ const ICON = (s: number) => `<svg width="${s}" height="${s}" viewBox="0 0 128 12
   + '<path d="M64 42 C73 34 86 31 98 33 L98 92 C86 90 73 92 64 99 Z" fill="#fffdf6" stroke="#33261a" stroke-width="4" stroke-linejoin="round"/>'
   + '<path d="M38 48 C46 46 52 47 57 50 M38 58 C46 56 52 57 57 60 M38 68 C46 66 52 67 57 70" stroke="#b8a078" stroke-width="3" fill="none" stroke-linecap="round"/>'
   + '<path d="M71 50 C76 47 82 46 90 48 M71 60 C76 57 82 56 90 58" stroke="#b8a078" stroke-width="3" fill="none" stroke-linecap="round"/>'
-  + '<path d="M76 24 L90 24 L90 56 L83 48 L76 56 Z" fill="#255c46"/></svg>';
+  + '<path d="M76 24 L90 24 L90 56 L83 48 L76 56 Z" fill="#35569b"/></svg>';
 
 let chipsEl: HTMLElement;
 let bodyEl: HTMLElement;
@@ -336,8 +336,11 @@ function render() {
   bar.appendChild(chipsEl);
   const actions = document.createElement('div');
   actions.className = 'top-actions';
+  const exportBtn = button('내보내기', openExportModal, 'primary');
+  exportBtn.disabled = !lore;
   actions.append(
     button('파일 열기', pickFiles),
+    exportBtn,
     button('번역 설정', () => { settingsOpen = true; render(); }),
     button(theme === 'dark' ? '라이트' : '다크', () => {
       theme = theme === 'dark' ? 'light' : 'dark';
@@ -457,17 +460,30 @@ function buildSummary() {
     statPair('~' + tinyTok(tk.total), '토큰'),
   );
   bar.appendChild(span('spacer', ''));
-  const search = document.createElement('input');
-  search.type = 'search';
-  search.className = 'search';
-  search.placeholder = '이름, 키워드, 본문 검색';
-  search.value = query;
-  search.oninput = () => { query = search.value; renderBody(); };
-  bar.appendChild(search);
+  bar.appendChild(buildViewTabs());   // ★전체 로어북 스코프 탭 = 전체 폭 요약줄에(엔트리 위가 아니라)
   return bar;
+}
+function buildViewTabs() {
+  const tabs = document.createElement('div');
+  tabs.className = 'view-tabs';
+  const items: [ReaderTab, string][] = [['read', '읽기'], ['diagnose', '진단'], ['activate', '활성화 테스트'], ['glossary', '용어집']];
+  for (const [id, label] of items) {
+    const b = button(label, () => { readerTab = id; renderBody(); });
+    b.className = 'tab' + (readerTab === id ? ' active' : '');
+    tabs.appendChild(b);
+  }
+  return tabs;
 }
 function buildWorkspace() {
   const ws = document.createElement('section');
+  if (readerTab !== 'read') {   // 전체 스코프 뷰 = 전체 폭(목록 숨김 — 범위가 형태로 드러남)
+    ws.className = 'workspace full';
+    const panel = document.createElement('article');
+    panel.className = 'reader';
+    panel.appendChild(readerTab === 'diagnose' ? buildDiagnoseView() : readerTab === 'activate' ? buildActivateView() : buildGlossaryView());
+    ws.appendChild(panel);
+    return ws;
+  }
   ws.className = 'workspace pane-' + mobilePane;   // 좁은 화면에서만 의미(둘 중 하나 숨김)
   ws.append(buildEntryList(), buildReader());
   return ws;
@@ -477,6 +493,13 @@ function buildEntryList() {
   panel.className = 'entry-list';
   const head = document.createElement('div');
   head.className = 'list-head';
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.className = 'search list-search';
+  search.placeholder = '이름, 키워드, 본문 검색';
+  search.value = query;
+  search.oninput = () => { query = search.value; renderBody(); };
+  head.appendChild(search);
   const filterSel = document.createElement('select');
   [['all', '전체'], ['constant', '언제나 활성화'], ['conditional', '조건부'], ['disabled', '비활성']].forEach(([v, t]) => filterSel.appendChild(new Option(t, v)));
   filterSel.value = filter;
@@ -594,23 +617,9 @@ function entryRow(e: any) {
 function buildReader() {
   const panel = document.createElement('article');
   panel.className = 'reader';
-  panel.appendChild(buildReaderTabs());
-  if (readerTab === 'diagnose') {
-    panel.appendChild(buildDiagnoseView());
-    return panel;
-  }
-  if (readerTab === 'activate') {
-    panel.appendChild(buildActivateView());
-    return panel;
-  }
-  if (readerTab === 'glossary') {
-    panel.appendChild(buildGlossaryView());
-    return panel;
-  }
-  if (readerTab === 'export') {
-    panel.appendChild(buildExportView());
-    return panel;
-  }
+  const back = button('← 목록', () => { mobilePane = 'list'; renderBody(); }, 'ghost');
+  back.className = 'mob-back';   // 좁은 화면에서만 보임(CSS)
+  panel.appendChild(back);
   const e = selectedEntry();
   if (!e) {
     panel.appendChild(div('empty-reader', '엔트리를 선택하세요.'));
@@ -698,38 +707,31 @@ function buildReader() {
   return panel;
 }
 
-// 편집 폼 — 원본 위 오버레이(저장=edits/addedEntries, 원본 불변). 편집 중엔 읽기 뷰 대체.
+// 편집 워크시트 — 읽기(액자)와 달리 편집은 "작업": 패널 전폭·전고, 본문 입력칸이 남은 높이를 전부 차지.
 function buildEditForm(e: any) {
-  const page = document.createElement('div');
-  page.className = 'reader-page';
-  const sheet = document.createElement('div');
-  sheet.className = 'page-sheet edit-sheet';
-  const head = document.createElement('div');
-  head.className = 'reader-head';
-  head.appendChild(span('eyebrow-kind', e.raw ? '엔트리 편집' : '새 엔트리'));
+  const work = document.createElement('div');
+  work.className = 'edit-work';
   const f: any = {};
-  const fld = (label: string, el: HTMLElement, hint?: string) => { const w = document.createElement('div'); w.className = 'field'; const l = document.createElement('label'); l.textContent = label; w.append(l, el); if (hint) { const sm = document.createElement('small'); sm.textContent = hint; w.appendChild(sm); } return w; };
+  const fld = (label: string, el: HTMLElement, cls = '') => { const w = document.createElement('div'); w.className = 'field ' + cls; const l = document.createElement('label'); l.textContent = label; w.append(l, el); return w; };
   f.name = inputEl(e.name || '');
   f.keys = inputEl(e.keys.join(', '));
   f.second = inputEl(e.secondaryKeys.join(', '));
+  const mk = (checked: boolean) => { const c = document.createElement('input'); c.type = 'checkbox'; c.checked = checked; return c; };
+  f.constant = mk(!!e.constant); f.selective = mk(!!e.selective); f.useRegex = mk(!!e.useRegex); f.enabled = mk(e.enabled !== false);
+  const tg = (el: HTMLInputElement, label: string) => { const w = document.createElement('label'); w.className = 'toggle'; w.append(el, document.createTextNode(label)); return w; };
+  const meta = document.createElement('div');
+  meta.className = 'edit-meta';
+  meta.append(
+    fld(e.raw ? '이름' : '이름 (새 엔트리)', f.name),
+    fld('활성화 키 — 쉼표 구분', f.keys),
+    fld('두번째 키', f.second),
+  );
+  const toggles = document.createElement('div');
+  toggles.className = 'edit-toggles';
+  toggles.append(tg(f.constant, '언제나 활성화'), tg(f.selective, '멀티플 키'), tg(f.useRegex, '정규식 사용'), tg(f.enabled, '활성'));
   f.content = document.createElement('textarea');
   f.content.className = 'edit-content';
   f.content.value = e.content || '';
-  const mk = (checked: boolean) => { const c = document.createElement('input'); c.type = 'checkbox'; c.checked = checked; return c; };
-  f.constant = mk(!!e.constant); f.selective = mk(!!e.selective); f.useRegex = mk(!!e.useRegex); f.enabled = mk(e.enabled !== false);
-  const toggles = document.createElement('div');
-  toggles.className = 'edit-toggles';
-  const tg = (el: HTMLInputElement, label: string) => { const w = document.createElement('label'); w.className = 'toggle'; w.append(el, document.createTextNode(label)); return w; };
-  toggles.append(tg(f.constant, '언제나 활성화'), tg(f.selective, '멀티플 키'), tg(f.useRegex, '정규식 사용'), tg(f.enabled, '활성'));
-  const body = document.createElement('div');
-  body.className = 'edit-body settings-body';
-  body.append(
-    fld('이름', f.name),
-    fld('활성화 키', f.keys, '쉼표로 구분'),
-    fld('두번째 키', f.second, '멀티플 키일 때만 사용돼요'),
-    toggles,
-    fld('본문', f.content),
-  );
   const acts = document.createElement('div');
   acts.className = 'reader-actions edit-acts';
   acts.append(
@@ -738,28 +740,10 @@ function buildEditForm(e: any) {
   );
   if (e.raw && edits[e.uid]) acts.appendChild(button('원본으로 되돌리기', () => { delete edits[e.uid]; delete translations[e.uid]; editingUid = null; glossaryRows = null; refreshIssueMap(); saveDraft(); renderBody(); }));
   acts.appendChild(button('이 엔트리 삭제', () => deleteEntry(e)));
-  head.appendChild(acts);
-  sheet.append(head, body);
-  page.appendChild(sheet);
-  panelScroll(page);
-  return page;
+  work.append(meta, toggles, f.content, acts);
+  return work;
 }
-function panelScroll(_el: HTMLElement) { /* 자리표시 — reader-page가 자체 스크롤 */ }
 
-function buildReaderTabs() {
-  const tabs = document.createElement('div');
-  tabs.className = 'reader-tabs';
-  const back = button('← 목록', () => { mobilePane = 'list'; renderBody(); }, 'ghost');
-  back.className = 'mob-back';   // 좁은 화면에서만 보임(CSS)
-  tabs.appendChild(back);
-  const items: [ReaderTab, string][] = [['read', '읽기'], ['diagnose', '진단'], ['activate', '활성화 테스트'], ['glossary', '용어집'], ['export', '내보내기']];
-  for (const [id, label] of items) {
-    const b = button(label, () => { readerTab = id; renderBody(); });
-    b.className = 'tab' + (readerTab === id ? ' active' : '');
-    tabs.appendChild(b);
-  }
-  return tabs;
-}
 
 function severityLabel(s: string) {
   if (s === 'error') return '오류';
@@ -889,24 +873,44 @@ function reasonText(r: any) {
   return map[r.reason] || r.detail || r.reason || '';
 }
 
-function buildExportView() {
+function openExportModal() {
+  if (!lore) { toast('먼저 파일을 여세요.'); return; }
+  const ov = document.createElement('div');
+  ov.className = 'modal';
+  const close = () => ov.remove();
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  const panel = document.createElement('div');
+  panel.className = 'settings-panel export-panel';
+  const head = document.createElement('div');
+  head.className = 'settings-head';
+  head.innerHTML = '<h2>내보내기</h2>';
+  head.appendChild(button('닫기', close));
+  panel.appendChild(head);
   const body = document.createElement('div');
-  body.className = 'reader-tab-body analysis-body';
+  body.className = 'settings-body';
   const note = document.createElement('p');
   note.className = 'panel-note';
-  note.textContent = '현재 보기 상태 그대로 저장해요. 키워드는 항상 원문.';
+  note.textContent = '현재 보기 상태(번역·추가 키·편집) 그대로. 키워드는 항상 원문.';
   body.appendChild(note);
+  const wrap = (fn: any) => () => { close(); fn(); };
+  // 주 목적 = 원본 형식(가장 크게, 맨 위)
+  const hero = document.createElement('button');
+  hero.className = 'primary export-hero';
+  hero.innerHTML = '<b>원본 형식으로 저장</b><small>.charx · .png · .jpeg · .json · .risum — 리스에서 카드만 바꾸면 끝</small>';
+  hero.onclick = wrap(exportRepacked);
+  body.appendChild(hero);
   const grid = document.createElement('div');
   grid.className = 'export-grid';
   grid.append(
-    exportCard('원본 형식으로 저장', '번역·추가 키·편집을 반영해 원본과 같은 파일(.charx/.png/.jpeg/.json/.risum)로. 리스에서 카드만 바꾸면 끝.', () => exportRepacked()),
-    exportCard('Markdown', '읽기와 공유에 좋은 문서 형식입니다.', () => exportMarkdown()),
-    exportCard('CCv3 JSON', '표준 character_book 형식으로 다시 넣기 좋습니다.', () => exportCharacterBook()),
-    exportCard('정규화 JSON', '분석/백업용 통합 스키마입니다.', () => exportNormalized()),
-    exportCard('전체 복사', '현재 원문/번역 보기 상태의 Markdown을 클립보드에 복사합니다.', () => copyText(buildMarkdown(effLore(), showTranslated ? translations : null, 'tr', keyAdds))),
+    exportCard('Markdown', '읽기와 공유용 문서.', wrap(exportMarkdown)),
+    exportCard('CCv3 JSON', '표준 character_book — 리스 로어북 가져오기용.', wrap(exportCharacterBook)),
+    exportCard('정규화 JSON', '분석/백업용 통합 스키마.', wrap(exportNormalized)),
+    exportCard('전체 복사', 'Markdown을 클립보드로.', wrap(() => copyText(buildMarkdown(effLore(), showTranslated ? translations : null, 'tr', keyAdds)))),
   );
   body.appendChild(grid);
-  return body;
+  panel.appendChild(body);
+  ov.appendChild(panel);
+  document.body.appendChild(ov);
 }
 
 function exportCard(title: string, desc: string, onClick: any) {
@@ -933,10 +937,6 @@ function buildBottomActions() {
   bar.append(
     button('전체 번역', () => translateEntries(realEntries()), 'primary'),
     button('활성화 키 번역 추가', openArmModal),
-    button('전체 복사', () => copyText(buildMarkdown(effLore(), showTranslated ? translations : null, 'tr', keyAdds))),
-    button('Markdown 저장', () => exportMarkdown()),
-    button('CCv3 JSON 저장', () => exportCharacterBook()),
-    button('정규화 JSON 저장', () => exportNormalized()),
   );
   if (hasDraftState()) {
     const d = button('초안 버리기', () => { if (confirm('편집·추가 키 초안을 모두 버리고 원본으로 되돌릴까요?')) discardDraft(); }, 'ghost');

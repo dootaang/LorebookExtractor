@@ -8,10 +8,10 @@
   --paper: #fffdf6;       /* 종이(리더 페이지) — 가장 밝음 */
   --line: #dcc59a;
   --line-soft: #e8d8b4;
-  --text: #33261a;        /* 잉크 — 대비 강화 */
-  --dim: #7b6040;
-  --accent: #255c46;      /* 딥그린 = 서표 리본 */
-  --accent-soft: #e6ecdb; /* 초록 옅은 면(선택 배경) */
+  --text: #2b2016;        /* 잉크 — 대비 강화 */
+  --dim: #7b6647;
+  --accent: #35569b;      /* 만년필 잉크 블루 = 상호작용(버튼·선택·탭·리본) */
+  --accent-soft: #e7ebf5; /* 잉크 옅은 면(선택 배경) */
   --accent2: #b8793a;
   --accent-ink: #fffaf0;
   --danger: #b3402a;
@@ -31,10 +31,10 @@
   --line-soft: #3b331f;
   --text: #efe4cf;
   --dim: #b7a07d;
-  --accent: #74b891;
-  --accent-soft: #2c3a2c;
+  --accent: #8ba3e8;
+  --accent-soft: #232c44;
   --accent2: #d29a5e;
-  --accent-ink: #102116;
+  --accent-ink: #0e1526;
   --danger: #e06c50;
   --ok: #78c596;
   --warn: #d9a05f;
@@ -207,12 +207,14 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent2); }
 .entry-list { display: flex; flex-direction: column; }
 .list-head {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   padding: 9px;
   border-bottom: 1px solid var(--line);
   background: var(--panel3);
 }
+.list-search { flex: 1 1 100%; }
 .list-head select { min-width: 0; flex: 1; }
 .list-scroll { overflow-y: auto; padding: 8px; }
 .folder-title {
@@ -239,7 +241,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent2); }
 .entry-row.constant { border-left-color: var(--ok); }
 .entry-row.off { opacity: .55; }
 .entry-row.off .entry-title { text-decoration: line-through; text-decoration-color: var(--dim); }
-.entry-row:hover { background: var(--panel3); border-color: var(--line-soft); border-left-color: var(--ok); }
+.entry-row:hover { background: var(--panel3); border-color: var(--line-soft); }
 .entry-row:hover:not(.constant) { border-left-color: var(--line); }
 .entry-row.active { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 32%, var(--line)); }
 .entry-row.active.constant { border-left-color: var(--ok); }
@@ -262,7 +264,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent2); }
 .issue-dot.error { background: var(--danger); }
 .issue-dot.warning { background: var(--warn); }
 .issue-dot.info { background: var(--line); }
-.tr-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--accent); opacity: .7; }
+.tr-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--accent); opacity: .75; }
 .entry-keys { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; overflow: hidden; max-height: 22px; }
 .entry-nokey { color: var(--dim); font-size: 11.5px; }
 .keychip.mini { padding: 1px 7px; font-size: 11px; border-color: var(--line-soft); background: var(--panel); }
@@ -270,32 +272,23 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent2); }
 .entry-flags { display: inline-flex; align-items: center; gap: 4px; }
 
 .reader { display: flex; flex-direction: column; }
-/* 탭 = 밑줄 세그먼트("탭답게") — 액션 버튼과 문법을 분리. */
-.reader-tabs {
-  display: flex;
-  gap: 2px;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-  overflow-x: auto;
-  flex: 0 0 auto;
-}
-.reader-tabs .tab {
+/* 보기 탭(요약줄 우측) = 전체 로어북 스코프 — 배치가 범위를 말한다. */
+.view-tabs { display: flex; gap: 2px; align-self: stretch; }
+.view-tabs .tab {
   border: 0;
   border-bottom: 2px solid transparent;
   border-radius: 0;
   background: transparent;
-  padding: 11px 12px 9px;
+  padding: 8px 12px;
   white-space: nowrap;
   color: var(--dim);
   font-weight: 600;
 }
-.reader-tabs .tab:hover { color: var(--text); }
-.reader-tabs .tab.active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-  font-weight: 800;
-}
+.view-tabs .tab:hover { color: var(--text); }
+.view-tabs .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 800; }
+/* 분석 뷰(진단/활성화/용어집) = 전체 폭 단일 패널 */
+.workspace.full { grid-template-columns: 1fr; }
+.workspace.full .analysis-body { max-width: 1000px; width: 100%; margin: 0 auto; }
 .reader-tab-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -350,17 +343,35 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent2); }
 .chip-label.added-label { color: var(--ok); }
 .arm-panel { width: min(520px, 96vw); }
 /* 용어집 — 표기 쌍 목록 */
-/* 라이트 편집 */
+/* 라이트 편집 — 워크시트(읽기 액자와 분리: 편집=작업 모드, 전폭·전고) */
+.edit-work {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px 16px;
+  background: var(--panel3);
+}
+.edit-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.edit-work .edit-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  font-size: 15px;
+  line-height: 1.7;
+  padding: 14px 16px;
+  background: var(--paper);
+}
+.edit-toggles { display: flex; flex-wrap: wrap; gap: 14px; }
+.edit-acts { flex: 0 0 auto; margin: 0; }
 .edit-dot { color: var(--accent); font-size: 11px; line-height: 1; }
 .entry-row.removed { opacity: .55; display: flex; justify-content: space-between; align-items: center; cursor: default; }
 .entry-row.removed .entry-title { text-decoration: line-through; text-decoration-color: var(--dim); }
 .restore-btn { font-size: 12px; padding: 3px 9px; flex: 0 0 auto; }
 .add-entry { width: 100%; margin-top: 6px; border-style: dashed; color: var(--dim); }
 .add-entry:hover { color: var(--accent); border-color: var(--accent); }
-.edit-sheet .edit-body { padding: 18px 30px 26px; }
-.edit-content { min-height: 300px; resize: vertical; font-size: 14.5px; line-height: 1.65; width: 100%; }
-.edit-toggles { display: flex; flex-wrap: wrap; gap: 14px; }
-.edit-acts { margin-top: 12px; }
 .gloss-list { display: grid; gap: 4px; }
 .gloss-row {
   display: grid;
@@ -496,6 +507,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent2); }
   margin: 0;
   color: var(--dim);
 }
+.export-panel { width: min(560px, 96vw); }
+.export-hero { display: grid; gap: 4px; text-align: left; padding: 14px 16px; }
+.export-hero b { font-size: 15.5px; }
+.export-hero small { font-weight: 500; opacity: .85; }
 
 .bottom-actions {
   display: flex;
@@ -596,15 +611,19 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent2); }
   .mob-back {
     display: inline-flex;
     align-items: center;
+    align-self: flex-start;
     border: 0;
-    border-right: 1px solid var(--line-soft);
+    border-bottom: 1px solid var(--line-soft);
     border-radius: 0;
     background: transparent;
-    padding: 11px 12px 9px;
+    padding: 10px 14px;
+    width: 100%;
     color: var(--accent);
     font-weight: 800;
     white-space: nowrap;
   }
+  .view-tabs { overflow-x: auto; max-width: 100%; }
+  .summary { gap: 6px; }
   .reader-title h1 { font-size: 19px; }
   .reader-page { padding: 10px 8px 80px; }
   .reader-head { padding: 14px 16px 10px; }

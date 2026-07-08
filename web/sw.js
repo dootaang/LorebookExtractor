@@ -2,7 +2,7 @@
 // Static offline cache for the web-only Lorebook Extractor.
 'use strict';
 
-const CACHE = 'lorebook-static-v2';
+const CACHE = 'lorebook-static-v3';
 const ASSETS = ['./', 'style.css', 'dist/main.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'sample-lorebook.json'];
 
 self.addEventListener('install', (e) => {
