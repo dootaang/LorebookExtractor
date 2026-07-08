@@ -99,4 +99,10 @@
 - **부수 수선**: 목록이 원본 배열 순서 고정 + 편집 미반영이던 잠복 결함 → 그룹 안 순서가 정렬 모드를 따르고 행이 eff 병합본 표시.
 - **발견**: 샘플 lorebook_export.json은 전 엔트리 insertorder 동률 — 순서 이동·복제의 동률 재부여 경로가 실사용에서 필수임이 확인됨.
 - 검증: 테스트 47개 유지 · E2E 신규 1종(e2e-edit) + 기존 3종 회귀 전부 통과 · 캡처 육안 확인 · 콘솔 0.
-- 남은 후보(3차, 미승인): undo 스택 · 로어북 설정 편집 · 데코레이터 빌더 · 빈 로어북 신규 작성 · 병합 / 번역 실키 스모크(사장님 키 필요).
+
+## 11. 작업 결과 (2026-07-08, Claude — 3차 편집기 2군 완료, 사장님 승인 하 + DnD 추가 요구 반영)
+
+- **3차 전체** = 커밋 bdab8ba. ① undo/redo(오버레이 스냅샷 스택 50개, 전 변이 지점 배선, Ctrl+Z/Ctrl+Shift+Z, 하단바 버튼) ② 로어북 설정(CCv3, 요약줄 설정 버튼 — 검색 깊이·로어북 최대 토큰·재귀 스캔, 오버라이드만 저장·초안 포함, effLore→진단·활성화 즉시 반영, applyCard+buildCharacterBook로 내보내기 반영) ③ 데코레이터 빌더(편집 폼 칩+KNOWN_DECORATORS 셀렉트, 숫자 가드, 본문과 동기) ④ 빈 로어북 신규 작성(risu-export 파일 형태 → 일반 경로) ⑤ 병합(목록 하단 버튼, 새 엔트리로 추가) ⑥ **드래그앤드롭 재배치**(사장님 추가 요구 — 배치 순서 정렬일 때 행 드래그, 드롭 위치로 전체 순서 재부여, 파일 드롭과 draggingUid 게이트 분리, 터치는 ↑/↓).
+- 코어 변경: applyCard에 settings 인자(scan_depth·token_budget·recursive_scanning) · normalize buildCharacterBook에 설정 출력 · diagnose에서 NUMERIC_DECORATORS export.
+- 검증: 테스트 48개 · E2E 신규 2종(e2e-3a/e2e-3b) + 기존 4종 회귀 전부 통과 · 캡처 육안 · 콘솔 0. (숨김 창 capturePage는 페인트가 한 프레임 늦을 수 있음 — 상태 검증은 DOM 프로브로.)
+- 남은 후보: 번역 실키 스모크(사장님 키 필요) · README 스크린샷 · Playwright 시각 체크.
