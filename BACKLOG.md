@@ -1,5 +1,16 @@
 # Lorebook Extractor Backlog
 
+## 2026-07-08 저녁 (Claude) — 1차 완료: 내보내기 포맷 선택 + 미니 서재
+
+### 완료(커밋 b549fb4 · 556d016, 상세 = HANDOFF_다음작업.md §9)
+- 내보내기 포맷 선택: 모달에 `.charx/.png/.json` 변환(JPEG 폴리글랏→charx=zip 수술 무손실, 그 외 cardEncode 배선, PNG 베이스 없으면 toast). 테스트 47개.
+- 미니 서재: `web/src/library.ts`(IDB lbx v1) — 파일 자동 보관(해시 dedup)·초안 IDB 승격+**번역 포함**·LS 마이그레이션·빈 화면 최근 파일(즉시 열기·용량·persist)·삭제 시 초안 동반. E2E 3종 통과.
+- "활성화 키 번역 실패 70" 종결 — 원인은 엔드포인트 URL 오입력(사장님 확인), 파이프라인 정상.
+
+### ★다음 작업(착수 전 사장님 승인 필요)
+- 편집기 1군: 선택 모드+일괄 작업·복제·순서 이동·검색&치환 — HANDOFF_다음작업.md §6.
+- 번역 실키 스모크(Gemini/OpenAI/Anthropic CORS) — 사장님 키 필요, 미실시.
+
 ## 2026-07-08 세션 총정리 (Claude) — 다음 작업은 ★HANDOFF_다음작업.md가 권위
 
 ### 완료(전부 커밋·배포됨, 라이브 = lorebookextractor.web.app)

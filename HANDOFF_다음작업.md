@@ -85,3 +85,11 @@
 - 형식 변환 구현 선례: `C:\assetextractor2\web\src\main.ts`(변환 버튼·getBytes 배선) — 같은 코어 사용.
 - IDB·최근 파일·persist: LogPapa `C:\pro 1.2\web\src\store.ts`(idbOpen 패턴) / 에셋추출기2 recent UI.
 - 완료 후: 이 문서 하단에 "작업 결과" 섹션 추가 + BACKLOG.md 갱신 + 커밋·푸시.
+
+## 9. 작업 결과 (2026-07-08, Claude — 1차 완료)
+
+- **★A 내보내기 포맷 선택** = 커밋 b549fb4. 모달 히어로 아래 `다른 형식으로: [.charx][.png][.json]`(봇카드만, 원본과 같은 형식은 숨김 — `srcFormat` = 원본 매직으로 판별, 폴리글랏의 parsed.format='charx'와 구분). JPEG 폴리글랏→charx는 스펙대로 zip 수술(공짜), 그 외는 cardEncode+`cardAssetBytes` 배선. **발견**: New_TSF 에셋은 ext=png 거짓말(실제 RIFF/WebP) → `pickPngBase` null = png 변환 불가 카드가 맞음 → toast 가드 경로(테스트로 고정). 테스트 4종 추가(총 47).
+- **★B 미니 서재** = 커밋 556d016. 신규 `web/src/library.ts`(DB `lbx` v1, 스펙 §5 스키마 그대로). 자동 보관(해시 dedup)·초안 IDB 승격+translations 포함·LS 1회 마이그레이션·최근 파일 목록(용량 표시+persist 1회)·삭제 시 초안 동반. saveDraft는 호출 시점 스냅샷 캡처(디바운스 중 파일 전환 오염 방지 — 스펙에 없던 경쟁 조건 수선).
+- 검증: `npm test` 47개 전부 통과 · `web:build` OK · E2E 3종(e2e-fmt/e2e-lib/e2e-mig, 콘솔 에러 0) 전부 통과.
+- 미결이던 "활성화 키 번역 실패 70" = 사장님 확인 결과 엔드포인트 URL 오입력이었음(파이프라인 정상) — 종결.
+- 다음 = §6 편집기 1군(선택 모드·일괄 작업·복제·순서 이동·검색&치환) — **착수 전 사장님 별도 승인 필요**.
