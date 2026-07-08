@@ -11,6 +11,7 @@ import { simulateActivation } from '../../core/lorebook/activate.js';
 import { estimateLorebookTokens, estimateEntryTokens } from '../../core/lorebook/tokens.js';
 import { extractGlossary, buildGlossaryText } from '../../core/lorebook/glossary.js';   // 용어집(고유명사 표기 쌍) — 채팅 번역 일관성용
 import { renderMdLite } from '../../core/lorebook/mdlite.js';   // 표시 전용 안전 마크다운(내보내기·번역 데이터는 원본 유지)
+import { saveFile, listFiles, loadFileBytes, removeFile, saveDraftState, loadDraftState, storageInfo, requestPersistOnce } from './library.js';   // 미니 서재(IDB 영속)
 import {
   PROVIDERS,
   providerDef,
@@ -64,37 +65,49 @@ let edits: Record<string, any> = {};          // uid → 편집 필드(name·key
 let removedUids: Record<string, true> = {};   // 소프트 삭제(목록에 취소선+복구, 내보내기 제외)
 let addedEntries: any[] = [];                 // 새 엔트리(통일 스키마, raw 없음)
 let editingUid: string | null = null;         // 편집 폼이 열린 엔트리
-let draftKey = '';                            // 'lb-draft-' + 파일 sha256 — 파일별 초안
+let fileHash = '';                            // 파일 sha256 — 서재 파일·초안(IDB) 공용 키
 let draftTimer: any = null;
 
 function eff(e: any) { const d = edits[e.uid]; return d ? { ...e, ...d } : e; }
 function hasDraftState() { return !!(Object.keys(edits).length || Object.keys(removedUids).length || addedEntries.length || Object.keys(keyAdds).length); }
+// 초안 = IDB drafts(번역 포함). 상태가 없으면 레코드 삭제.
+//   해시·상태를 호출 시점에 캡처 — 디바운스 중 파일을 갈아타도 이전 해시에 새 파일 상태가 안 섞임(전환은 재할당이라 참조 캡처로 충분).
 function saveDraft() {
-  if (!draftKey) return;
+  if (!fileHash) return;
   clearTimeout(draftTimer);
+  const hash = fileHash;
+  const has = hasDraftState() || Object.keys(translations).length > 0;
+  const snap = has ? { edits, removedUids, addedEntries, keyAdds, translations } : null;
   draftTimer = setTimeout(() => {
-    try {
-      if (!hasDraftState()) { localStorage.removeItem(draftKey); return; }
-      localStorage.setItem(draftKey, JSON.stringify({ v: 1, t: Date.now(), edits, removedUids, addedEntries, keyAdds }));
-    } catch (_) { toast('초안 저장 실패 — 저장 공간이 부족해요'); }
+    saveDraftState(hash, snap).catch(() => toast('초안 저장 실패 — 저장 공간을 확인하세요'));
   }, 400);
 }
-function loadDraft(): boolean {
-  if (!draftKey) return false;
+async function loadDraft(): Promise<boolean> {
+  if (!fileHash) return false;
   try {
-    const raw = localStorage.getItem(draftKey);
-    if (!raw) return false;
-    const d = JSON.parse(raw);
+    let d = await loadDraftState(fileHash);
+    if (!d) {
+      // 기존 localStorage 초안(lb-draft-*) 1회 마이그레이션 — 읽어서 IDB로, 성공 시 삭제.
+      const lsKey = 'lb-draft-' + fileHash;
+      const raw = localStorage.getItem(lsKey);
+      if (raw) {
+        d = JSON.parse(raw);
+        await saveDraftState(fileHash, { edits: d.edits || {}, removedUids: d.removedUids || {}, addedEntries: d.addedEntries || [], keyAdds: d.keyAdds || {}, translations: {} });
+        localStorage.removeItem(lsKey);
+      }
+    }
+    if (!d) return false;
     edits = d.edits || {};
     removedUids = d.removedUids || {};
     addedEntries = Array.isArray(d.addedEntries) ? d.addedEntries : [];
     keyAdds = d.keyAdds || {};
-    return hasDraftState();
+    translations = d.translations || {};
+    return hasDraftState() || Object.keys(translations).length > 0;
   } catch (_) { return false; }
 }
 function discardDraft() {
   edits = {}; removedUids = {}; addedEntries = []; keyAdds = {}; editingUid = null; glossaryRows = null;
-  try { if (draftKey) localStorage.removeItem(draftKey); } catch (_) {}
+  saveDraft();   // 남은 상태(번역)만 다시 기록 — 없으면 레코드 삭제
   refreshIssueMap();
   statusText = '초안을 버렸어요 — 원본 그대로.';
   renderBody();
@@ -241,6 +254,8 @@ function removeChip(id: string) {
   if (currentId === id) {
     currentId = null;
     parsed = null;
+    srcFormat = '';
+    fileHash = '';
     lore = null;
     selectedUid = '';
     parseError = '';
@@ -278,16 +293,17 @@ async function selectChip(id: string) {
       : bytes[0] === 0xff && bytes[1] === 0xd8 ? 'jpeg'
       : bytes[0] === 0x6f ? 'risum' : 'json';
     parsed = parseCard(bytes, chip.name, { lazy: true });
-    try { draftKey = 'lb-draft-' + (await sha256Hex(bytes)); } catch (_) { draftKey = ''; }   // 파일 지문 → 초안 키
+    try { fileHash = await sha256Hex(bytes); } catch (_) { fileHash = ''; }   // 파일 지문 → 서재·초안 키
     lore = extractLorebook(parsed.card || parsed);
     if (!lore || !Array.isArray(lore.entries) || !lore.entries.some((e: any) => !e.isFolder)) {
       parseError = '이 파일에서 로어북을 찾지 못했습니다.';
     } else {
+      if (fileHash) saveFile(fileHash, chip.name, bytes).catch((e) => console.warn('[library] 보관 실패', e));   // 자동 보관(해시 dedup)
       selectedUid = realEntries()[0]?.uid || '';
       statusText = `${chip.name}에서 로어북을 읽었습니다.`;
       keyAdds = {}; edits = {}; removedUids = {}; addedEntries = []; editingUid = null;   // 파일 단위 상태 초기화
       glossaryRows = null;
-      if (loadDraft()) statusText = `${chip.name} — 저장된 초안을 복원했어요.`;
+      if (await loadDraft()) statusText = `${chip.name} — 저장된 작업(초안·번역)을 복원했어요.`;
       refreshIssueMap();
       mobilePane = 'list';   // 새 파일 = 좁은 화면에선 목록부터
     }
@@ -436,8 +452,62 @@ function buildEmpty() {
   const sampleBtn = button('샘플 로어북 구경하기', loadSample, 'ghost');
   trial.append(span('empty-hint', '처음이신가요?'), sampleBtn);
   col.appendChild(trial);
+  const lib = document.createElement('div');
+  lib.className = 'library';
+  col.appendChild(lib);
+  fillLibrary(lib);   // 비동기 채움 — 서재가 비어 있으면 아무것도 안 그림
   wrap.appendChild(col);
   return wrap;
+}
+
+// ── 미니 서재 UI — 빈 화면 최근 파일(재드롭 없이 즉시 열기, 초안·번역 자동 복원) ──
+function fmtAgo(t: number) {
+  const d = Date.now() - (t || 0);
+  if (d < 60000) return '방금';
+  if (d < 3600000) return Math.floor(d / 60000) + '분 전';
+  if (d < 86400000) return Math.floor(d / 3600000) + '시간 전';
+  return Math.floor(d / 86400000) + '일 전';
+}
+function openFromLibrary(f: any) {
+  const id = uid();
+  chips.push({
+    id, name: f.name, size: f.size,
+    read: async () => {
+      const by = await loadFileBytes(f.hash);
+      if (!by) throw new Error('보관된 파일을 읽지 못했습니다.');
+      return by;
+    },
+  });
+  selectChip(id);
+}
+async function fillLibrary(box: HTMLElement) {
+  let files: any[] = [];
+  try { files = await listFiles(); } catch (_) { return; }
+  if (!files.length) return;
+  requestPersistOnce();   // 브라우저가 저장소를 함부로 비우지 않게 1회 요청(결과는 콘솔)
+  const head = document.createElement('div');
+  head.className = 'lib-head';
+  head.appendChild(span('lib-title', '최근 파일'));
+  const info = await storageInfo();
+  if (info && info.quota) head.appendChild(span('lib-usage', `저장 공간 ${fmtBytes(info.usage)} / ${fmtBytes(info.quota)}`));
+  box.appendChild(head);
+  for (const f of files.slice(0, 12)) {
+    const row = document.createElement('div');
+    row.className = 'lib-row';
+    const open = document.createElement('button');
+    open.className = 'lib-open';
+    open.title = f.name;
+    open.onclick = () => openFromLibrary(f);
+    open.append(span('nm', f.name), span('meta', `${fmtBytes(f.size || 0)} · ${fmtAgo(f.openedAt)}`));
+    const del = button('삭제', async () => {
+      if (!confirm(`'${f.name}' 보관과 초안을 삭제할까요?`)) return;
+      try { await removeFile(f.hash); } catch (_) {}
+      render();
+    }, 'ghost');
+    del.title = '보관 파일과 초안을 함께 삭제';
+    row.append(open, del);
+    box.appendChild(row);
+  }
 }
 // 요약 = 통계(버튼처럼 안 보이게: 숫자 강조 + 라벨 흐림). 종류는 뱃지 하나만.
 function statPair(value: string, label: string) {
@@ -1276,6 +1346,7 @@ async function translateEntries(entries: any[], force = false) {
       translations[j.uid] = translations[j.uid] || {};
       translations[j.uid][j.field] = j.prefix + text + j.suffix;
     });
+    saveDraft();   // 번역 상태도 서재 초안에 영속(새로고침 후 복원)
     statusText = res.failed.length
       ? `일부 실패: ${res.failed.length}개 · 성공/캐시 ${res.translated}개 — ${res.failed[0].error}`
       : `번역 완료: ${res.translated}개${res.cached ? ` (캐시 ${res.cached}개)` : ''}`;
@@ -1440,7 +1511,7 @@ function renderSettings() {
       toast('저장했습니다');
     }, 'primary'),
     button('키 삭제', () => { clearWebConfig(); settingsOpen = false; render(); toast('키를 삭제했습니다'); }),
-    button('번역 캐시 비우기', async () => { await clearTranslationCache(); translations = {}; render(); toast('캐시를 비웠습니다'); }),
+    button('번역 캐시 비우기', async () => { await clearTranslationCache(); translations = {}; saveDraft(); render(); toast('캐시를 비웠습니다'); }),
   );
   body.appendChild(foot);
   panel.appendChild(body);
