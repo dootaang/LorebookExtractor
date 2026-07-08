@@ -2,8 +2,8 @@
 // @ts-nocheck
 import { parseCard } from '../../core/card/parseCard.js';
 import { extractLorebook, splitDecorators, groupByFolder, loreStats, buildCharacterBook, buildMarkdown, mergedKeys } from '../../core/lorebook/normalize.js';
-import { applyLorebookToCard } from '../../core/lorebook/applyCard.js';   // 편집·번역·추가 키 → 원본 카드 JSON
-import { repackCard, repackCharx, zipStartInBytes } from '../../core/card/repack.js';   // 카드 JSON만 수술 교체(원본 형식 내보내기)
+import { applyLorebookToCard, applyLorebookToModuleJson } from '../../core/lorebook/applyCard.js';   // 편집·번역·추가 키 → 원본 카드 JSON(+내장 모듈)
+import { repackCard, repackCharx, repackRisum, zipStartInBytes, charxEmbeddedModule } from '../../core/card/repack.js';   // 수술 교체(원본 형식 내보내기)
 import { encodeJson, encodeCharx, encodePng, pickPngBase } from '../../core/card/cardEncode.js';   // 형식 변환(charx↔png↔json 재조립)
 import { cardAssetBytes } from '../../core/card/cardAssets.js';             // 변환용 getBytes — 에셋 지연 복호
 import { diagnoseLorebook, KNOWN_DECORATORS, NUMERIC_DECORATORS } from '../../core/lorebook/diagnose.js';
@@ -1488,14 +1488,23 @@ function exportEntries() {
     keys: mergedKeys(e, keyAdds),
   }));
 }
-// 원본 형식 내보내기 — 원본 바이트에서 카드 JSON만 수술 교체(에셋·그림·메타 바이트 보존).
+// charx 계열 원본의 내장 module.risum 동기 — 리스AI는 모듈의 lorebook을 card.json보다 우선 읽으므로
+//   내보내기 때 모듈 메인 JSON에도 같은 최종 엔트리를 반영해야 수정이 리스에 보인다.
+function moduleSyncOf(bytes: Uint8Array, entries: any[]) {
+  const mod = charxEmbeddedModule(bytes);
+  if (!mod) return null;
+  return { orig: mod.bytes, jsonStr: applyLorebookToModuleJson(mod.json, entries) };   // jsonStr null = 로어북 없는 모듈(그대로 통과)
+}
+// 원본 형식 내보내기 — 원본 바이트에서 카드 JSON(+내장 모듈 로어북)만 수술 교체(에셋·그림·메타 바이트 보존).
 async function exportRepacked() {
   const chip = chips.find((c) => c.id === currentId);
   if (!chip || !lore || !parsed) return;
   try {
     const bytes = await chip.read();
-    const json = applyLorebookToCard(parsed.card, lore.kind, exportEntries(), loreSettings);
-    const { bytes: out, ext } = repackCard(bytes, json);
+    const entries = exportEntries();
+    const json = applyLorebookToCard(parsed.card, lore.kind, entries, loreSettings);
+    const modSync = moduleSyncOf(bytes, entries);
+    const { bytes: out, ext } = repackCard(bytes, json, { moduleJsonStr: modSync ? modSync.jsonStr : null });
     const base = safeName((chip.name || 'card').replace(/\.[^.]+$/, ''));
     downloadBlob(new Blob([out]), `${base}_수정.${ext}`);
     toast('원본 형식으로 저장했어요');
@@ -1509,8 +1518,11 @@ async function exportAs(format: 'charx' | 'png' | 'json') {
   setStatus(`.${format} 변환 중...`);
   await new Promise((r) => setTimeout(r, 16));   // 상태줄이 먼저 그려지게(대형 카드 대비)
   try {
-    const json = applyLorebookToCard(parsed.card, lore.kind, exportEntries(), loreSettings);
+    const entries = exportEntries();
+    const json = applyLorebookToCard(parsed.card, lore.kind, entries, loreSettings);
     const base = safeName((chip.name || 'card').replace(/\.[^.]+$/, ''));
+    // charx 계열 원본 = 내장 module.risum 동기 준비(리스AI가 모듈 로어북을 우선 읽음)
+    const modSync = (srcFormat === 'charx' || srcFormat === 'jpeg') ? moduleSyncOf(await chip.read(), entries) : null;
     let out: Uint8Array;
     let mime = 'application/octet-stream';
     if (format === 'charx' && srcFormat === 'jpeg') {
@@ -1518,13 +1530,18 @@ async function exportAs(format: 'charx' | 'png' | 'json') {
       const bytes = await chip.read();
       const zs = zipStartInBytes(bytes);
       if (zs < 0) throw new Error('JPEG 안에서 카드(zip)를 찾지 못했습니다');
-      out = repackCharx(bytes.subarray(zs), json);
+      out = repackCharx(bytes.subarray(zs), json, modSync ? modSync.jsonStr : null);
       mime = 'application/zip';
     } else {
       const full = { ...parsed, card: JSON.parse(json) };
       const gb = (a: any) => cardAssetBytes(parsed, a);
       if (format === 'json') { out = encodeJson(full, gb); mime = 'application/json'; }
-      else if (format === 'charx') { out = encodeCharx(full, gb); mime = 'application/zip'; }
+      else if (format === 'charx') {
+        // 재조립 charx에도 module.risum 동봉(로어북 동기 반영본) — 빠뜨리면 리스에서 스크립트·로어북 원본이 유실/역전됨
+        const extra = modSync ? { 'module.risum': modSync.jsonStr ? repackRisum(modSync.orig, modSync.jsonStr) : modSync.orig } : null;
+        out = encodeCharx(full, gb, extra);
+        mime = 'application/zip';
+      }
       else {
         const pb = pickPngBase(full, gb);
         if (!pb) { setStatus(''); toast('이 카드엔 PNG로 쓸 이미지가 없어요'); return; }

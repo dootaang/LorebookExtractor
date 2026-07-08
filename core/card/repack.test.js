@@ -6,9 +6,10 @@ const assert = require('assert');
 const fs = require('fs');
 const { unzipSync } = require('fflate');
 const { parseCard } = require('./parseCard.js');
-const { repackCard, repackCharx, rpackEncode, zipStartInBytes } = require('./repack.js');
+const { repackCard, repackCharx, repackRisum, rpackEncode, zipStartInBytes, charxEmbeddedModule } = require('./repack.js');
 const { encodeJson, encodeCharx, encodePng, pickPngBase } = require('./cardEncode.js');
 const { cardAssetBytes } = require('./cardAssets.js');
+const { applyLorebookToModuleJson } = require('../lorebook/applyCard.js');
 const { DECODE_MAP, rpackDecode } = require('./risum.js');
 const { extractLorebook } = require('../lorebook/normalize.js');
 const { applyLorebookToCard } = require('../lorebook/applyCard.js');
@@ -101,6 +102,49 @@ if (fs.existsSync(CHARX)) {
     assert.equal(p2.assets.length, p.assets.length);
     assert.ok(p2.assets.every((a) => a.found));
   });
+  // ── 내장 module.risum 동기 — 리스AI는 charx 가져오기 때 모듈 lorebook을 card.json보다 우선 ──
+  const embMod = charxEmbeddedModule(orig);
+  if (embMod) {
+    const ki = lore.entries.findIndex((e) => e.keys.length && !String(e.keys[0]).includes('folder'));
+    const entriesJp = lore.entries.map((e, i) => (
+      i === 0 ? { ...e, name: '변환 이름', content: '변환 본문' }
+      : i === ki ? { ...e, keys: e.keys.concat(['ジャ日本語キー']) } : e));
+    const jsonJp = applyLorebookToCard(p.card, lore.kind, entriesJp);
+    const modStr = applyLorebookToModuleJson(embMod.json, entriesJp);
+    const modBook = (j) => (j.module && typeof j.module === 'object' ? j.module : j).lorebook;
+
+    ok('모듈 동기 수술: 모듈 lorebook에 수정·일본어 키 반영 + 리스 전용 필드·스크립트·에셋 보존', () => {
+      assert.ok(modStr, '모듈에 lorebook이 있어야 함');
+      const zs = zipStartInBytes(orig);
+      const out = repackCharx(zs > 0 ? orig.subarray(zs) : orig, jsonJp, modStr);
+      const mod2 = charxEmbeddedModule(out);
+      const lb0 = modBook(embMod.json), lb2 = modBook(mod2.json);
+      assert.equal(lb2.length, lb0.length);
+      assert.equal(lb2[0].comment, '변환 이름');
+      assert.equal(lb2[0].content, '변환 본문');
+      assert.ok(lb2[ki].key.includes('ジャ日本語キー'));           // ★핵심: 리스가 읽는 쪽에 일본어 키
+      assert.equal(lb2[0].bookVersion, lb0[0].bookVersion);        // 리스 전용 필드 보존
+      assert.equal(lb2[1].content, lb0[1].content);                // 나머지 무변경
+      const m0 = embMod.json.module || embMod.json, m2 = mod2.json.module || mod2.json;
+      assert.deepEqual(m2.trigger, m0.trigger);                    // 트리거 스크립트 보존
+      assert.deepEqual(m2.regex, m0.regex);
+      // 모듈 에셋 블록 바이트 보존(메인 뒤 꼬리 비교)
+      const tail = (mb) => mb.subarray(6 + new DataView(mb.buffer, mb.byteOffset + 2, 4).getUint32(0, true));
+      assert.deepEqual(tail(mod2.bytes), tail(embMod.bytes));
+      // card.json도 함께 반영(동기)
+      const l2 = extractLorebook(parseCard(out, 'c.charx', { lazy: true }).card);
+      assert.ok(l2.entries[ki].keys.includes('ジャ日本語キー'));
+    });
+    ok('charx 재조립(encodeCharx)에 module.risum 동봉 + 로어북 동기', () => {
+      const out = encodeCharx({ ...p, card: JSON.parse(jsonJp) }, gb, { 'module.risum': repackRisum(embMod.bytes, modStr) });
+      const mod2 = charxEmbeddedModule(out);
+      assert.ok(mod2, '재조립 charx에 module.risum이 있어야 함');
+      const lb2 = modBook(mod2.json);
+      assert.equal(lb2[0].comment, '변환 이름');
+      assert.ok(lb2[ki].key.includes('ジャ日本語キー'));
+    });
+  } else console.log('  (모듈 동기 스킵 — 샘플에 module.risum 없음)');
+
   ok('로어북 설정 쓰기: scan_depth·token_budget·recursive_scanning 반영 + CCv3 JSON 빌더', () => {
     const { buildCharacterBook } = require('../lorebook/normalize.js');
     const j2 = applyLorebookToCard(p.card, 'card', entries, { scanDepth: 7, tokenBudget: 1234, recursive: true });

@@ -24,20 +24,42 @@ function ccv3Entry(e, i) {
   return raw;
 }
 
+// 리스 내부 lorebook 필드 반영(공용) — base(원본 raw 복제 또는 최소형)에 바뀐 필드만 덮어씀.
+function risuApply(base, e, i) {
+  base.key = e.keys.join(', ');
+  base.secondkey = e.secondaryKeys.join(', ');
+  base.comment = e.name;
+  base.content = e.content;
+  base.alwaysActive = !!e.constant;
+  base.selective = !!e.selective;
+  base.useRegex = !!e.useRegex;
+  base.insertorder = e.order != null ? e.order : i;
+  return base;
+}
 // 통일 엔트리 → 리스 내부 lorebook 엔트리(raw 보존 병합). 폴더 엔트리는 raw 그대로 통과.
 function risuEntry(e, i) {
   if (e.isFolder && e.raw) return clone(e.raw);
-  const raw = e.raw ? clone(e.raw) : { mode: 'normal' };
-  raw.key = e.keys.join(', ');
-  raw.secondkey = e.secondaryKeys.join(', ');
-  raw.comment = e.name;
-  raw.content = e.content;
-  raw.alwaysActive = !!e.constant;
-  raw.selective = !!e.selective;
-  raw.useRegex = !!e.useRegex;
-  raw.insertorder = e.order != null ? e.order : i;
+  const raw = risuApply(e.raw ? clone(e.raw) : { mode: 'normal' }, e, i);
   if (e.folder) raw.folder = e.folder;
   return raw;
+}
+
+// charx 내장 module.risum의 메인 JSON에 최종 엔트리 반영 → 새 JSON 문자열(로어북 없는 모듈이면 null).
+//   ★리스AI는 charx 가져오기 때 이 모듈의 lorebook을 card.json의 character_book보다 우선하므로
+//     내보내기에서 반드시 함께 갱신해야 수정이 리스에 보인다.
+//   매핑: 통일 uid 'e<i>' = 원본 인덱스 — module.lorebook[i]와 1:1(둘 다 같은 globalLore 수출본).
+//     모듈 쪽 raw를 복제해 바뀐 필드만 덮어써 bookVersion·mode 등 리스 전용 필드 보존. 새 엔트리는 최소형.
+function applyLorebookToModuleJson(moduleRoot, entries) {
+  const root = clone(moduleRoot);
+  const mod = root.module && typeof root.module === 'object' ? root.module : root;
+  if (!Array.isArray(mod.lorebook)) return null;
+  const orig = mod.lorebook;
+  mod.lorebook = entries.filter((e) => !e.isFolder).map((e, i) => {
+    const m = /^e(\d+)$/.exec(String(e.uid));
+    const base = m && orig[Number(m[1])] ? clone(orig[Number(m[1])]) : { mode: 'normal' };
+    return risuApply(base, e, i);
+  });
+  return JSON.stringify(root);
 }
 
 // card(parseCard 결과의 card 객체) + kind(extractLorebook의 kind) + 최종 엔트리들 → 새 카드 JSON 문자열.
@@ -67,4 +89,4 @@ function applyLorebookToCard(card, kind, entries, settings) {
   return JSON.stringify(c);
 }
 
-module.exports = { applyLorebookToCard, ccv3Entry, risuEntry };
+module.exports = { applyLorebookToCard, applyLorebookToModuleJson, ccv3Entry, risuEntry };

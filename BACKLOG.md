@@ -13,6 +13,12 @@
 ### 3차 완료(사장님 승인, 커밋 bdab8ba — 상세 = HANDOFF §11)
 - undo/redo(Ctrl+Z) · 로어북 설정 편집(검색 깊이/최대 토큰/재귀 — 내보내기 반영) · 데코레이터 빌더 · 빈 로어북 신규 작성 · 병합 · 드래그앤드롭 재배치(사장님 추가 요구). 테스트 48개 · E2E 6종 전부 통과.
 
+### 중대 결함 수정(2026-07-08 밤) — charx 내장 module.risum 로어북 동기
+- 증상: 활성화 키 번역 추가 후 charx 내보내기 → 리스AI에서 키가 안 보임.
+- 원인: 리스AI는 charx에 module.risum이 있으면 그 lorebook을 card.json보다 **우선**(overrideLorebook, 소스 확인). 우리는 card.json만 수술 → 모듈 내장 카드에선 모든 수정이 리스에서 무효.
+- 수정: 모든 charx 계열 내보내기에서 모듈 lorebook도 동기 수술(applyLorebookToModuleJson + repackCharx moduleJsonStr + encodeCharx extraFiles). 리스 전용 필드·스크립트·에셋 무손실 테스트 고정. 테스트 50개 · E2E 7종.
+- ※같은 원리 후속 후보: 뷰어 읽기 소스도 모듈 우선으로 정합(현재는 두 소스가 리스 수출본에서 항상 동일해 표시 문제 없음) · 진단에 "카드/모듈 로어북 불일치" 경고.
+
 ### ★다음 후보(승인 필요)
 - 번역 실키 스모크(Gemini/OpenAI/Anthropic CORS) — 사장님 키 필요, 미실시.
 - README 스크린샷 · Playwright 시각 체크 · 편집기 3군(있다면 사장님 피드백 기반).

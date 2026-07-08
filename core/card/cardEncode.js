@@ -29,7 +29,8 @@ function encodeJson(parsed, getBytes) {
 }
 
 // → CharX(ZIP: card.json + assets/<i>.<ext>). uri를 embeded://assets/<i>.<ext>로 재작성.
-function encodeCharx(parsed, getBytes) {
+//   extraFiles = {경로: bytes} — 내장 module.risum(리스AI가 로어북·스크립트를 우선 읽는 컨테이너) 등 동봉용.
+function encodeCharx(parsed, getBytes, extraFiles) {
   const card = cloneCard(parsed); const data = card.data || (card.data = {}); const files = {};
   if (Array.isArray(data.assets)) data.assets = data.assets.map((a, i) => {
     const asset = (parsed.assets || [])[i]; const by = asset ? getBytes(asset) : null;
@@ -38,6 +39,7 @@ function encodeCharx(parsed, getBytes) {
     return Object.assign({}, a, { uri: 'embeded://' + pth });
   });
   files['card.json'] = strToU8(JSON.stringify(card));
+  if (extraFiles) for (const [n, by] of Object.entries(extraFiles)) if (by) files[n] = toBytes(by);
   return zipSync(files);
 }
 

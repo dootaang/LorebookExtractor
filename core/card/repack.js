@@ -10,8 +10,8 @@
 //   .json   : 재직렬화
 //   .risum  : RPack 인코딩(DECODE_MAP 역표)으로 메인 JSON 블록만 교체 — 에셋 블록 바이트 그대로
 'use strict';
-const { unzipSync, zipSync, strToU8 } = require('fflate');
-const { DECODE_MAP } = require('./risum.js');
+const { unzipSync, zipSync, strToU8, strFromU8 } = require('fflate');
+const { DECODE_MAP, rpackDecode } = require('./risum.js');
 
 const toBytes = (x) => (x instanceof Uint8Array ? x : new Uint8Array(x));
 function cat(arrs) { let len = 0; for (const a of arrs) len += a.length; const o = new Uint8Array(len); let p = 0; for (const a of arrs) { o.set(a, p); p += a.length; } return o; }
@@ -20,17 +20,35 @@ function cat(arrs) { let len = 0; for (const a of arrs) len += a.length; const o
 const ENCODE_MAP = (() => { const t = new Uint8Array(256); for (let i = 0; i < 256; i++) t[DECODE_MAP[i]] = i; return t; })();
 function rpackEncode(bytes) { const b = toBytes(bytes); const o = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) o[i] = ENCODE_MAP[b[i]]; return o; }
 
-// ── charx: card.json만 교체 ──
-function repackCharx(origBytes, cardJsonStr) {
+// ── charx: card.json 교체(+ 내장 module.risum이 있고 moduleJsonStr이 오면 그 메인 JSON도 교체) ──
+//   ★리스AI는 charx에 module.risum이 있으면 그 lorebook을 card.json보다 우선하므로 둘 다 동기해야 한다.
+function repackCharx(origBytes, cardJsonStr, moduleJsonStr) {
   const z = unzipSync(toBytes(origBytes));
   const out = {};
   let found = false;
   for (const name of Object.keys(z)) {
     if (name === 'card.json') { out[name] = [strToU8(cardJsonStr), { level: 6 }]; found = true; }
+    else if (name === 'module.risum' && moduleJsonStr) out[name] = [repackRisum(z[name], moduleJsonStr), { level: 0 }];
     else out[name] = [z[name], { level: 0 }];   // 에셋(이미 압축된 미디어)은 무압축 통과 = 빠름·무손실
   }
   if (!found) throw new Error('charx 안에 card.json이 없습니다');
   return zipSync(out);
+}
+
+// charx(또는 JPEG 폴리글랏) 안에 내장된 module.risum → { bytes, json(메인 JSON 객체) } | null.
+function charxEmbeddedModule(fileBytes) {
+  const b = toBytes(fileBytes);
+  let zip = null;
+  if (b[0] === 0x50 && b[1] === 0x4b) zip = b;
+  else if (b[0] === 0xff && b[1] === 0xd8) { const zs = zipStartInBytes(b); if (zs >= 0) zip = b.subarray(zs); }
+  if (!zip) return null;
+  try {
+    const files = unzipSync(zip, { filter: (f) => f.name === 'module.risum' });
+    const mod = files['module.risum'];
+    if (!mod || mod[0] !== 0x6f) return null;
+    const mainLen = new DataView(mod.buffer, mod.byteOffset + 2, 4).getUint32(0, true);
+    return { bytes: mod, json: JSON.parse(strFromU8(rpackDecode(mod.subarray(6, 6 + mainLen)))) };
+  } catch (_) { return null; }
 }
 
 // ── png: 카드 tEXt 청크 교체(ccv3 우선, 없으면 chara[V2]) ──
@@ -93,11 +111,11 @@ function zipStartInBytes(b) {
   }
   return -1;
 }
-function repackJpegCharx(origBytes, cardJsonStr) {
+function repackJpegCharx(origBytes, cardJsonStr, moduleJsonStr) {
   const b = toBytes(origBytes);
   const zs = zipStartInBytes(b);
   if (zs < 0) throw new Error('JPEG 안에서 카드(zip)를 찾지 못했습니다');
-  return cat([b.subarray(0, zs), repackCharx(b.subarray(zs), cardJsonStr)]);
+  return cat([b.subarray(0, zs), repackCharx(b.subarray(zs), cardJsonStr, moduleJsonStr)]);
 }
 
 // ── risum: 메인 JSON 블록만 교체(에셋 블록 바이트 그대로) ──
@@ -110,14 +128,14 @@ function repackRisum(origBytes, mainJsonStr) {
   return cat([b.subarray(0, 2), lenLE, main, b.subarray(6 + oldLen)]);
 }
 
-// ── 디스패처: 원본 바이트로 포맷 자동 판별 ──
-function repackCard(origBytes, cardJsonStr) {
+// ── 디스패처: 원본 바이트로 포맷 자동 판별. opts.moduleJsonStr = charx 계열의 내장 모듈 동기용 ──
+function repackCard(origBytes, cardJsonStr, opts = {}) {
   const b = toBytes(origBytes);
   if (b[0] === 0x89 && b[1] === 0x50) return { bytes: repackPng(b, cardJsonStr), ext: 'png' };
-  if (b[0] === 0x50 && b[1] === 0x4b) return { bytes: repackCharx(b, cardJsonStr), ext: 'charx' };
-  if (b[0] === 0xff && b[1] === 0xd8) return { bytes: repackJpegCharx(b, cardJsonStr), ext: 'jpeg' };
+  if (b[0] === 0x50 && b[1] === 0x4b) return { bytes: repackCharx(b, cardJsonStr, opts.moduleJsonStr), ext: 'charx' };
+  if (b[0] === 0xff && b[1] === 0xd8) return { bytes: repackJpegCharx(b, cardJsonStr, opts.moduleJsonStr), ext: 'jpeg' };
   if (b[0] === 0x6f) return { bytes: repackRisum(b, cardJsonStr), ext: 'risum' };
   return { bytes: strToU8(cardJsonStr), ext: 'json' };   // 평문 JSON(risu-export 포함)
 }
 
-module.exports = { repackCard, repackCharx, repackPng, repackJpegCharx, repackRisum, rpackEncode, zipStartInBytes };
+module.exports = { repackCard, repackCharx, repackPng, repackJpegCharx, repackRisum, rpackEncode, zipStartInBytes, charxEmbeddedModule };
