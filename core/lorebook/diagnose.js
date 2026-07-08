@@ -147,4 +147,4 @@ function diagnoseLorebook(lore, opts = {}) {
   };
 }
 
-module.exports = { diagnoseLorebook, diagnoseDecorators, KNOWN_DECORATORS };
+module.exports = { diagnoseLorebook, diagnoseDecorators, KNOWN_DECORATORS, NUMERIC_DECORATORS };

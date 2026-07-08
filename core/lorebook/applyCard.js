@@ -42,12 +42,19 @@ function risuEntry(e, i) {
 
 // card(parseCard 결과의 card 객체) + kind(extractLorebook의 kind) + 최종 엔트리들 → 새 카드 JSON 문자열.
 //   entries에는 폴더 엔트리 포함(모듈 폴더 보존). CCv3는 폴더 개념이 없어 비폴더만.
-function applyLorebookToCard(card, kind, entries) {
+//   settings(선택): { scanDepth, tokenBudget, recursive } — 값이 있는 것만 character_book에 덮어씀(CCv3 전용).
+function applyLorebookToCard(card, kind, entries, settings) {
   const c = clone(card);
   if (kind === 'card') {
     const data = c.data && typeof c.data === 'object' ? c.data : c;
     if (!data.character_book || typeof data.character_book !== 'object') data.character_book = { entries: [] };
     data.character_book.entries = entries.filter((e) => !e.isFolder).map(ccv3Entry);
+    if (settings && typeof settings === 'object') {
+      const b = data.character_book;
+      if (settings.scanDepth != null) b.scan_depth = Number(settings.scanDepth);
+      if (settings.tokenBudget != null) b.token_budget = Number(settings.tokenBudget);
+      if (settings.recursive != null) b.recursive_scanning = !!settings.recursive;
+    }
   } else if (kind === 'module') {
     const mod = c.module && typeof c.module === 'object' ? c.module : c;
     mod.lorebook = entries.map(risuEntry);

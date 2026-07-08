@@ -164,7 +164,16 @@ function buildCharacterBook(lore, tr, nameMode, keyAdd) {
       ...(e.useRegex ? { extensions: { risu_useRegex: true } } : {}),
     };
   });
-  return { spec: 'lorebook_v3', data: { name: lore.bookName || '', entries } };
+  return {
+    spec: 'lorebook_v3',
+    data: {
+      name: lore.bookName || '',
+      ...(lore.scanDepth != null ? { scan_depth: Number(lore.scanDepth) } : {}),
+      ...(lore.tokenBudget != null ? { token_budget: Number(lore.tokenBudget) } : {}),
+      ...(lore.recursive ? { recursive_scanning: true } : {}),
+      entries,
+    },
+  };
 }
 
 // 읽기·공유용 Markdown.

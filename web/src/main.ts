@@ -6,7 +6,7 @@ import { applyLorebookToCard } from '../../core/lorebook/applyCard.js';   // 편
 import { repackCard, repackCharx, zipStartInBytes } from '../../core/card/repack.js';   // 카드 JSON만 수술 교체(원본 형식 내보내기)
 import { encodeJson, encodeCharx, encodePng, pickPngBase } from '../../core/card/cardEncode.js';   // 형식 변환(charx↔png↔json 재조립)
 import { cardAssetBytes } from '../../core/card/cardAssets.js';             // 변환용 getBytes — 에셋 지연 복호
-import { diagnoseLorebook } from '../../core/lorebook/diagnose.js';
+import { diagnoseLorebook, KNOWN_DECORATORS, NUMERIC_DECORATORS } from '../../core/lorebook/diagnose.js';
 import { simulateActivation } from '../../core/lorebook/activate.js';
 import { estimateLorebookTokens, estimateEntryTokens } from '../../core/lorebook/tokens.js';
 import { extractGlossary, buildGlossaryText } from '../../core/lorebook/glossary.js';   // 용어집(고유명사 표기 쌍) — 채팅 번역 일관성용
@@ -61,16 +61,45 @@ let translations: Record<string, { name?: string; content?: string }> = {};
 let keyAdds: Record<string, string[]> = {};   // 활성화 키 번역 추가 — 원본 키에 "추가"만(내보내기 반영)
 let glossaryRows: any[] | null = null;        // 용어집(지연 추출·LLM 채움 결과 보존)
 // ── 라이트 편집(오버레이 — 원본 불변) + localStorage 초안 자동보존 ──
-let edits: Record<string, any> = {};          // uid → 편집 필드(name·keys·secondaryKeys·content·constant·selective·useRegex·enabled)
+let edits: Record<string, any> = {};          // uid → 편집 필드(name·keys·secondaryKeys·content·constant·selective·useRegex·enabled·order)
 let removedUids: Record<string, true> = {};   // 소프트 삭제(목록에 취소선+복구, 내보내기 제외)
 let addedEntries: any[] = [];                 // 새 엔트리(통일 스키마, raw 없음)
+let loreSettings: any = {};                   // 로어북 설정 오버라이드(scanDepth·tokenBudget·recursive) — CCv3 전용, 초안 포함
+let undoStack: any[] = [];                    // 편집 오버레이 스냅샷(Ctrl+Z) — 파일 전환 시 비움, 번역은 비대상
+let redoStack: any[] = [];
+let draggingUid = '';                         // 목록 행 드래그 중인 uid — 파일 드롭 핸들러와 충돌 방지 게이트
 let editingUid: string | null = null;         // 편집 폼이 열린 엔트리
 let selectedUids: Record<string, true> = {};  // 선택 모드 — 일괄 작업 대상(파일 전환 시 초기화, 초안 미포함)
 let fileHash = '';                            // 파일 sha256 — 서재 파일·초안(IDB) 공용 키
 let draftTimer: any = null;
 
 function eff(e: any) { const d = edits[e.uid]; return d ? { ...e, ...d } : e; }
-function hasDraftState() { return !!(Object.keys(edits).length || Object.keys(removedUids).length || addedEntries.length || Object.keys(keyAdds).length); }
+function hasDraftState() { return !!(Object.keys(edits).length || Object.keys(removedUids).length || addedEntries.length || Object.keys(keyAdds).length || Object.keys(loreSettings).length); }
+// ── undo 스택 — 편집 오버레이 전체 스냅샷(깊은 복사). 번역은 비대상(내용 캐시로 복원 가능).
+const snapState = () => JSON.parse(JSON.stringify({ edits, removedUids, addedEntries, keyAdds, loreSettings }));
+function pushUndo() {
+  undoStack.push(snapState());
+  if (undoStack.length > 50) undoStack.shift();
+  redoStack = [];
+}
+function applySnap(s: any) {
+  edits = s.edits || {}; removedUids = s.removedUids || {}; addedEntries = Array.isArray(s.addedEntries) ? s.addedEntries : [];
+  keyAdds = s.keyAdds || {}; loreSettings = s.loreSettings || {};
+  editingUid = null; glossaryRows = null;
+  refreshIssueMap(); saveDraft(); renderBody();
+}
+function undo() {
+  if (!undoStack.length || !lore) return;
+  redoStack.push(snapState());
+  statusText = '되돌렸어요.';
+  applySnap(undoStack.pop());
+}
+function redo() {
+  if (!redoStack.length || !lore) return;
+  undoStack.push(snapState());
+  statusText = '다시 실행했어요.';
+  applySnap(redoStack.pop());
+}
 // 초안 = IDB drafts(번역 포함). 상태가 없으면 레코드 삭제.
 //   해시·상태를 호출 시점에 캡처 — 디바운스 중 파일을 갈아타도 이전 해시에 새 파일 상태가 안 섞임(전환은 재할당이라 참조 캡처로 충분).
 function saveDraft() {
@@ -78,7 +107,7 @@ function saveDraft() {
   clearTimeout(draftTimer);
   const hash = fileHash;
   const has = hasDraftState() || Object.keys(translations).length > 0;
-  const snap = has ? { edits, removedUids, addedEntries, keyAdds, translations } : null;
+  const snap = has ? { edits, removedUids, addedEntries, keyAdds, loreSettings, translations } : null;
   draftTimer = setTimeout(() => {
     saveDraftState(hash, snap).catch(() => toast('초안 저장 실패 — 저장 공간을 확인하세요'));
   }, 400);
@@ -102,12 +131,14 @@ async function loadDraft(): Promise<boolean> {
     removedUids = d.removedUids || {};
     addedEntries = Array.isArray(d.addedEntries) ? d.addedEntries : [];
     keyAdds = d.keyAdds || {};
+    loreSettings = d.loreSettings || {};
     translations = d.translations || {};
     return hasDraftState() || Object.keys(translations).length > 0;
   } catch (_) { return false; }
 }
 function discardDraft() {
-  edits = {}; removedUids = {}; addedEntries = []; keyAdds = {}; editingUid = null; glossaryRows = null;
+  pushUndo();   // 실수로 버려도 Ctrl+Z로 복구
+  edits = {}; removedUids = {}; addedEntries = []; keyAdds = {}; loreSettings = {}; editingUid = null; glossaryRows = null;
   saveDraft();   // 남은 상태(번역)만 다시 기록 — 없으면 레코드 삭제
   refreshIssueMap();
   statusText = '초안을 버렸어요 — 원본 그대로.';
@@ -117,14 +148,14 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const h = await crypto.subtle.digest('SHA-256', bytes);
   return Array.from(new Uint8Array(h)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
-// 분석·내보내기 공용: 삭제 제외 + 편집 병합 + 추가분 포함(폴더는 통과).
+// 분석·내보내기 공용: 삭제 제외 + 편집 병합 + 추가분 포함(폴더는 통과) + 로어북 설정 오버라이드.
 function effLore() {
   if (!lore) return lore;
   const entries = lore.entries
     .filter((e: any) => e.isFolder || !removedUids[e.uid])
     .map((e: any) => (e.isFolder ? e : eff(e)))
     .concat(addedEntries.map(eff));
-  return { ...lore, entries };
+  return { ...lore, ...loreSettings, entries };
 }
 let theme = localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light';
 let mdRaw = false;   // 본문 보기: 렌더(기본) ↔ 원문
@@ -136,7 +167,8 @@ function refreshIssueMap() {
   if (!lore) return;
   try {
     const rank: any = { error: 0, warning: 1, info: 2 };
-    for (const i of diagnoseLorebook(effLore(), { tokenBudget: lore.tokenBudget }).issues) {
+    const el = effLore();   // 설정 오버라이드(로어북 최대 토큰 등)까지 반영
+    for (const i of diagnoseLorebook(el, { tokenBudget: el.tokenBudget }).issues) {
       if (!i.uid || i.code === 'long_entry' || i.code === 'disabled') continue;   // 정보성은 도트 제외(노이즈)
       if (!(i.uid in issueSevByUid) || rank[i.severity] < rank[issueSevByUid[i.uid]]) issueSevByUid[i.uid] = i.severity;
     }
@@ -303,7 +335,8 @@ async function selectChip(id: string) {
       if (fileHash) saveFile(fileHash, chip.name, bytes).catch((e) => console.warn('[library] 보관 실패', e));   // 자동 보관(해시 dedup)
       selectedUid = realEntries()[0]?.uid || '';
       statusText = `${chip.name}에서 로어북을 읽었습니다.`;
-      keyAdds = {}; edits = {}; removedUids = {}; addedEntries = []; editingUid = null; selectedUids = {};   // 파일 단위 상태 초기화
+      keyAdds = {}; edits = {}; removedUids = {}; addedEntries = []; loreSettings = {}; editingUid = null; selectedUids = {};   // 파일 단위 상태 초기화
+      undoStack = []; redoStack = [];
       glossaryRows = null;
       if (await loadDraft()) statusText = `${chip.name} — 저장된 작업(초안·번역)을 복원했어요.`;
       refreshIssueMap();
@@ -457,7 +490,7 @@ function buildEmpty() {
   const trial = document.createElement('div');
   trial.className = 'empty-actions';
   const sampleBtn = button('샘플 로어북 구경하기', loadSample, 'ghost');
-  trial.append(span('empty-hint', '처음이신가요?'), sampleBtn);
+  trial.append(span('empty-hint', '처음이신가요?'), sampleBtn, button('새 로어북 만들기', newLorebook, 'ghost'));
   col.appendChild(trial);
   const lib = document.createElement('div');
   lib.className = 'library';
@@ -535,6 +568,12 @@ function buildSummary() {
     span('book-name', lore.bookName || parsed?.name || '로어북'),
     span('kind-badge', lore.kind === 'module' ? '리스 모듈' : lore.kind === 'risu-export' ? '로어북 파일' : '봇카드'),
   );
+  if (lore.kind === 'card') {   // 로어북 설정은 CCv3 character_book에만 있음
+    const sb = button('설정', openLoreSettingsModal, 'ghost');
+    sb.className = 'ghost lore-set-btn' + (Object.keys(loreSettings).length ? ' edited' : '');
+    sb.title = '검색 깊이 · 로어북 최대 토큰 · 재귀 스캔';
+    title.appendChild(sb);
+  }
   bar.appendChild(title);
   bar.append(
     statPair(String(st.total), '엔트리'),
@@ -608,6 +647,10 @@ function buildEntryList() {
   const addBtn = button('+ 새 엔트리', addNewEntry, 'ghost');
   addBtn.className = 'ghost add-entry';
   scroll.appendChild(addBtn);
+  const mergeBtn = button('+ 다른 로어북 병합', pickMergeFile, 'ghost');
+  mergeBtn.className = 'ghost add-entry';
+  mergeBtn.title = '다른 파일의 엔트리를 새 엔트리로 뒤에 붙여요';
+  scroll.appendChild(mergeBtn);
   // 삭제 예정(소프트) — 복구 가능
   const removedList = lore.entries.filter((e: any) => !e.isFolder && removedUids[e.uid]);
   if (removedList.length) {
@@ -619,7 +662,7 @@ function buildEntryList() {
       const row = document.createElement('div');
       row.className = 'entry-row removed';
       row.append(span('entry-title', displayName(eff(e))));
-      const rb = button('복구', () => { delete removedUids[e.uid]; glossaryRows = null; refreshIssueMap(); saveDraft(); renderBody(); });
+      const rb = button('복구', () => { pushUndo(); delete removedUids[e.uid]; glossaryRows = null; refreshIssueMap(); saveDraft(); renderBody(); });
       rb.className = 'restore-btn';
       row.appendChild(rb);
       scroll.appendChild(row);
@@ -631,6 +674,7 @@ function buildEntryList() {
 
 // ── 라이트 편집 동작 ─────────────────────────────────────────────────────
 function addNewEntry() {
+  pushUndo();
   const u = 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const maxOrder = realEntries().reduce((m: number, e: any) => Math.max(m, e.order || 0), 0);
   addedEntries.push({ uid: u, name: '새 엔트리', keys: [], secondaryKeys: [], content: '', enabled: true, constant: false, selective: false, useRegex: false, order: maxOrder + 1, position: '', folder: '', isFolder: false, raw: null });
@@ -639,6 +683,7 @@ function addNewEntry() {
   renderBody();
 }
 function deleteEntry(e: any) {
+  pushUndo();
   if (e.raw) removedUids[e.uid] = true;
   else addedEntries = addedEntries.filter((x) => x.uid !== e.uid);
   if (editingUid === e.uid) editingUid = null;
@@ -663,6 +708,7 @@ function patchEntry(e: any, patch: any) {
 function bulkPatch(patch: any, msg: string) {
   const list = selEntries();
   if (!list.length) return;
+  pushUndo();
   for (const e of list) patchEntry(e, patch);
   glossaryRows = null; refreshIssueMap(); saveDraft();
   statusText = `${list.length}개 엔트리 — ${msg}.`;
@@ -672,6 +718,7 @@ function bulkDelete() {
   const list = selEntries();
   if (!list.length) return;
   if (!confirm(`선택한 ${list.length}개 엔트리를 삭제 예정으로 옮길까요?`)) return;
+  pushUndo();
   for (const e of list) {
     if (e.raw) removedUids[e.uid] = true;
     else addedEntries = addedEntries.filter((x) => x.uid !== e.uid);
@@ -693,6 +740,7 @@ function duplicateEntry(e: any) {
     useRegex: !!src.useRegex, order: (src.order || 0) + 0.5, position: src.position || '', folder: src.folder || '', isFolder: false, raw: null,
   };
   const collision = realEntries().some((x: any) => x.uid !== src.uid && (x.order || 0) === (src.order || 0));
+  pushUndo();
   addedEntries.push(dup);
   if (collision) {
     const seq = realEntries().slice().sort((a: any, b: any) => (a.order || 0) - (b.order || 0)).filter((x: any) => x.uid !== u);
@@ -711,6 +759,7 @@ function moveEntry(e: any, dir: number) {
   const i = list.findIndex((x: any) => x.uid === e.uid);
   const j = i + dir;
   if (i < 0 || j < 0 || j >= list.length) return;
+  pushUndo();
   if ((list[i].order || 0) === (list[j].order || 0)) {
     list.forEach((x: any, k: number) => { if ((x.order || 0) !== k) patchEntry(x, { order: k }); });
     list = sorted();
@@ -721,6 +770,120 @@ function moveEntry(e: any, dir: number) {
   saveDraft();
   renderBody();
 }
+// 드래그앤드롭 재배치 — 드롭 위치 기준으로 전체 배치 순서를 일련번호로 재부여(동률 파일도 결정적).
+function dropReorder(srcUid: string, dstUid: string, before: boolean) {
+  const seq = realEntries().slice().sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
+  const si = seq.findIndex((x: any) => x.uid === srcUid);
+  if (si < 0) return;
+  const [moved] = seq.splice(si, 1);
+  let di = seq.findIndex((x: any) => x.uid === dstUid);
+  if (di < 0) return;
+  if (!before) di++;
+  seq.splice(di, 0, moved);
+  pushUndo();
+  seq.forEach((x: any, k: number) => { if ((x.order || 0) !== k) patchEntry(x, { order: k }); });
+  saveDraft();
+  statusText = '배치 순서를 바꿨어요.';
+  renderBody();
+}
+function clearDropMarks() {
+  document.querySelectorAll('.entry-row.drop-before, .entry-row.drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
+}
+// 다른 로어북 병합 — 파일에서 엔트리를 뽑아 "새 엔트리"로 뒤에 붙임(현재 파일 원본 불변).
+async function mergeLorebook(file: File) {
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const p = parseCard(bytes, file.name, { lazy: true });
+    const l2 = extractLorebook(p.card || p);
+    const src = l2 && Array.isArray(l2.entries) ? l2.entries.filter((e: any) => !e.isFolder) : [];
+    if (!src.length) { toast('이 파일에서 로어북을 찾지 못했어요.'); return; }
+    pushUndo();
+    let order = realEntries().reduce((m: number, e: any) => Math.max(m, e.order || 0), 0);
+    src.forEach((e: any, i: number) => {
+      addedEntries.push({
+        uid: 'm' + Date.now().toString(36) + i + Math.random().toString(36).slice(2, 6),
+        name: e.name, keys: e.keys.slice(), secondaryKeys: e.secondaryKeys.slice(), content: e.content,
+        enabled: e.enabled !== false, constant: !!e.constant, selective: !!e.selective, useRegex: !!e.useRegex,
+        order: ++order, position: e.position || '', folder: '', isFolder: false, raw: null,
+      });
+    });
+    glossaryRows = null; refreshIssueMap(); saveDraft();
+    statusText = `${file.name}에서 ${src.length}개 엔트리를 병합했어요(새 엔트리로 추가).`;
+    renderBody();
+  } catch (err) { toast('병합 실패: ' + ((err && err.message) || err)); }
+}
+function pickMergeFile() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = ACCEPT;
+  input.className = 'merge-input';
+  input.style.display = 'none';
+  input.onchange = () => { const f = input.files && input.files[0]; input.remove(); if (f) mergeLorebook(f); };
+  document.body.appendChild(input);
+  input.click();
+}
+// 빈 로어북 신규 작성 — 리스 로어북 파일(risu-export) 형태로 만들어 일반 경로(파싱·서재·내보내기)를 그대로 탐.
+function newLorebook() {
+  const d = new Date();
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  const nm = `새 로어북 ${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+  const json = JSON.stringify({
+    type: 'risu', ver: 2, name: nm,
+    data: [{ key: '', comment: '새 엔트리', content: '', mode: 'normal', insertorder: 0, alwaysActive: false, selective: false, secondkey: '', useRegex: false }],
+  });
+  addFiles([new File([json], nm + '.json', { type: 'application/json' })]);
+}
+// 로어북 설정(CCv3 전용) — 검색 깊이·로어북 최대 토큰·재귀 스캔. 오버라이드만 저장(비우면 원본 값).
+function openLoreSettingsModal() {
+  const el = effLore();
+  const ov = document.createElement('div');
+  ov.className = 'modal';
+  const close = () => ov.remove();
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  const panel = document.createElement('div');
+  panel.className = 'settings-panel lore-set-panel';
+  const head = document.createElement('div');
+  head.className = 'settings-head';
+  head.innerHTML = '<h2>로어북 설정</h2>';
+  head.appendChild(button('닫기', close));
+  panel.appendChild(head);
+  const body = document.createElement('div');
+  body.className = 'settings-body';
+  const note = document.createElement('p');
+  note.className = 'panel-note';
+  note.textContent = '리스 로어북 설정과 같은 항목. 진단·활성화 테스트·내보내기에 반영됩니다(초안 보존).';
+  body.appendChild(note);
+  const scan = numberEl(el.scanDepth || 0, '0', '999', '1');
+  const budget = numberEl(el.tokenBudget || 0, '0', '200000', '64');
+  const rec = checkEl(!!el.recursive);
+  body.append(
+    fieldRow(
+      field('검색 깊이', scan, '최근 몇 메시지를 스캔할지. 0이면 원본 값 그대로.'),
+      field('로어북 최대 토큰', budget, '0이면 원본 값 그대로.'),
+    ),
+    field('재귀 스캔', labelWrap(rec, '발동된 엔트리 본문도 다시 스캔')),
+  );
+  const acts = document.createElement('div');
+  acts.className = 'reader-actions';
+  acts.appendChild(button('저장', () => {
+    const s: any = {};
+    const sd = Number(scan.value) || 0, tb = Number(budget.value) || 0;
+    if (sd > 0 && sd !== lore.scanDepth) s.scanDepth = sd;
+    if (tb > 0 && tb !== lore.tokenBudget) s.tokenBudget = tb;
+    if (rec.checked !== !!lore.recursive) s.recursive = rec.checked;
+    pushUndo();
+    loreSettings = s;
+    glossaryRows = null; refreshIssueMap(); saveDraft();
+    close();
+    statusText = Object.keys(s).length ? '로어북 설정을 저장했어요(초안).' : '로어북 설정 — 원본 값 그대로.';
+    renderBody();
+  }, 'primary'));
+  body.appendChild(acts);
+  panel.appendChild(body);
+  ov.appendChild(panel);
+  document.body.appendChild(ov);
+}
+
 // 검색&치환 — 본문·이름만(활성화 키·두번째 키는 발동 조건이라 불변). 실행 전 일치 수 미리보기, 결과는 edits 오버레이.
 function openReplaceModal() {
   const ov = document.createElement('div');
@@ -775,16 +938,20 @@ function openReplaceModal() {
     const re = buildRe();
     if (!re || re === 'err') { refreshPreview(); return; }
     const rv = useRe.checked ? repl.value : repl.value.replace(/\$/g, '$$$$');   // 리터럴 모드에선 $도 글자 그대로
-    let changed = 0;
+    const jobs: any[] = [];
     for (const e of realEntries()) {
       const name2 = (e.name || '').replace(re, rv);
       const content2 = (e.content || '').replace(re, rv);
-      if (name2 === e.name && content2 === e.content) continue;
+      if (name2 !== e.name || content2 !== e.content) jobs.push([e, name2, content2]);
+    }
+    if (!jobs.length) { toast('일치하는 곳이 없어요'); return; }
+    pushUndo();
+    let changed = 0;
+    for (const [e, name2, content2] of jobs) {
       patchEntry(e, { name: name2, content: content2 });
       delete translations[e.uid];   // 원문이 바뀌었으니 옛 번역은 무효
       changed++;
     }
-    if (!changed) { toast('일치하는 곳이 없어요'); return; }
     close();
     glossaryRows = null; refreshIssueMap(); saveDraft();
     statusText = `치환 완료 — ${changed}개 엔트리(초안 자동 보존).`;
@@ -796,6 +963,7 @@ function openReplaceModal() {
   document.body.appendChild(ov);
 }
 function saveEdit(e: any, f: any) {
+  pushUndo();
   const fields = {
     name: f.name.value.trim(),
     keys: f.keys.value.split(',').map((x: string) => x.trim()).filter(Boolean),
@@ -827,6 +995,35 @@ function entryRow(e: any) {
     + (e.constant ? ' constant' : '')
     + (!e.enabled ? ' off' : '');
   row.onclick = () => { selectedUid = e.uid; readerTab = 'read'; mobilePane = 'reader'; renderBody(); };
+  // 드래그앤드롭 재배치 — 배치 순서 정렬일 때만(다른 정렬에선 드롭 위치가 의미 없음). 터치는 ↑/↓ 버튼.
+  if (sort === 'order') {
+    row.draggable = true;
+    row.ondragstart = (ev: any) => {
+      draggingUid = e.uid;
+      ev.dataTransfer.setData('text/lbx-uid', e.uid);
+      ev.dataTransfer.effectAllowed = 'move';
+    };
+    row.ondragend = () => { draggingUid = ''; clearDropMarks(); };
+    row.ondragover = (ev: any) => {
+      if (!draggingUid || draggingUid === e.uid) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'move';
+      const r = row.getBoundingClientRect();
+      const before = ev.clientY < r.top + r.height / 2;
+      row.classList.toggle('drop-before', before);
+      row.classList.toggle('drop-after', !before);
+    };
+    row.ondragleave = () => row.classList.remove('drop-before', 'drop-after');
+    row.ondrop = (ev: any) => {
+      ev.preventDefault();
+      ev.stopPropagation();   // 문서 레벨 파일 드롭 핸들러로 새지 않게
+      const src = draggingUid;
+      draggingUid = '';
+      if (!src || src === e.uid) { clearDropMarks(); return; }
+      const r = row.getBoundingClientRect();
+      dropReorder(src, e.uid, ev.clientY < r.top + r.height / 2);
+    };
+  }
   row.append(span('entry-title', displayName(e)));
   const meta = document.createElement('span');
   meta.className = 'entry-meta';
@@ -975,16 +1172,57 @@ function buildEditForm(e: any) {
   f.content = document.createElement('textarea');
   f.content.className = 'edit-content';
   f.content.value = e.content || '';
+  // ── 데코레이터 빌더 — 본문 앞머리 @@라인을 칩으로 보여주고 추가/제거(값은 textarea와 항상 동기) ──
+  const decoBox = document.createElement('div');
+  decoBox.className = 'deco-build';
+  const decoChips = document.createElement('div');
+  decoChips.className = 'chipline deco-chips';
+  const renderDecoChips = () => {
+    decoChips.innerHTML = '';
+    const split = splitDecorators(f.content.value);
+    decoChips.appendChild(span('chip-label', '데코레이터'));
+    if (!split.decorators.length) decoChips.appendChild(span('deco-none', '없음'));
+    split.decorators.forEach((d: string, i: number) => {
+      const chip = span('decorator removable', d + ' ✕');
+      chip.title = '클릭해서 제거';
+      chip.onclick = () => {
+        const s = splitDecorators(f.content.value);
+        s.decorators.splice(i, 1);
+        f.content.value = s.decorators.concat(s.body ? [s.body] : []).join('\n');
+        renderDecoChips();
+      };
+      decoChips.appendChild(chip);
+    });
+  };
+  const decoSel = selectEl(Array.from(KNOWN_DECORATORS as Set<string>).map((d: string) => [d, d]), '@@depth');
+  const decoVal = inputEl('');
+  decoVal.className = 'deco-val';
+  const setValHint = () => { decoVal.placeholder = (NUMERIC_DECORATORS as Set<string>).has(decoSel.value) ? '숫자' : '값(없어도 됨)'; };
+  decoSel.onchange = setValHint;
+  setValHint();
+  const decoAdd = button('추가', () => {
+    const v = decoVal.value.trim();
+    if ((NUMERIC_DECORATORS as Set<string>).has(decoSel.value) && (v === '' || Number.isNaN(Number(v)))) { toast(decoSel.value + '에는 숫자가 필요해요'); return; }
+    f.content.value = decoSel.value + (v ? ' ' + v : '') + '\n' + f.content.value;
+    decoVal.value = '';
+    renderDecoChips();
+  });
+  const decoRow = document.createElement('div');
+  decoRow.className = 'deco-row';
+  decoRow.append(decoSel, decoVal, decoAdd);
+  renderDecoChips();
+  f.content.oninput = renderDecoChips;   // 본문 직접 수정도 칩과 동기
+  decoBox.append(decoChips, decoRow);
   const acts = document.createElement('div');
   acts.className = 'reader-actions edit-acts';
   acts.append(
     button('저장', () => saveEdit(e, f), 'primary'),
     button('취소', () => { editingUid = null; renderBody(); }),
   );
-  if (e.raw && edits[e.uid]) acts.appendChild(button('원본으로 되돌리기', () => { delete edits[e.uid]; delete translations[e.uid]; editingUid = null; glossaryRows = null; refreshIssueMap(); saveDraft(); renderBody(); }));
+  if (e.raw && edits[e.uid]) acts.appendChild(button('원본으로 되돌리기', () => { pushUndo(); delete edits[e.uid]; delete translations[e.uid]; editingUid = null; glossaryRows = null; refreshIssueMap(); saveDraft(); renderBody(); }));
   acts.appendChild(button('복제', () => duplicateEntry(e)));
   acts.appendChild(button('이 엔트리 삭제', () => deleteEntry(e)));
-  work.append(meta, toggles, f.content, acts);
+  work.append(meta, toggles, decoBox, f.content, acts);
   return work;
 }
 
@@ -996,7 +1234,8 @@ function severityLabel(s: string) {
 }
 
 function buildDiagnoseView() {
-  const report = diagnoseLorebook(effLore(), { tokenBudget: lore.tokenBudget });
+  const el = effLore();
+  const report = diagnoseLorebook(el, { tokenBudget: el.tokenBudget });
   const body = document.createElement('div');
   body.className = 'reader-tab-body analysis-body';
   const summary = document.createElement('div');
@@ -1061,7 +1300,7 @@ function buildActivateView() {
     body.appendChild(div('analysis-placeholder', '문장을 입력하고 테스트를 실행하세요.'));
     return body;
   }
-  const result = simulateActivation(lore, activationText);
+  const result = simulateActivation(effLore(), activationText);   // 편집·설정(검색 깊이/최대 토큰) 반영
   const summary = document.createElement('div');
   summary.className = 'analysis-summary';
   summary.append(
@@ -1195,6 +1434,7 @@ function buildBottomActions() {
       button('삭제', bulkDelete),
       button('선택 해제', clearSelection, 'ghost'),
     );
+    if (undoStack.length) { const u = button('되돌리기', undo, 'ghost'); u.title = 'Ctrl+Z'; bar.appendChild(u); }
     bar.appendChild(span('status', translating ? '번역 중...' : statusText));
     return bar;
   }
@@ -1211,6 +1451,8 @@ function buildBottomActions() {
     button('활성화 키 번역 추가', () => openArmModal()),
     button('검색&치환', openReplaceModal),
   );
+  if (undoStack.length) { const u = button('되돌리기', undo, 'ghost'); u.title = 'Ctrl+Z'; bar.appendChild(u); }
+  if (redoStack.length) { const r = button('다시 실행', redo, 'ghost'); r.title = 'Ctrl+Shift+Z'; bar.appendChild(r); }
   if (hasDraftState()) {
     const d = button('초안 버리기', () => { if (confirm('편집·추가 키 초안을 모두 버리고 원본으로 되돌릴까요?')) discardDraft(); }, 'ghost');
     d.title = '편집·삭제·추가 키를 모두 버리고 원본으로';
@@ -1252,7 +1494,7 @@ async function exportRepacked() {
   if (!chip || !lore || !parsed) return;
   try {
     const bytes = await chip.read();
-    const json = applyLorebookToCard(parsed.card, lore.kind, exportEntries());
+    const json = applyLorebookToCard(parsed.card, lore.kind, exportEntries(), loreSettings);
     const { bytes: out, ext } = repackCard(bytes, json);
     const base = safeName((chip.name || 'card').replace(/\.[^.]+$/, ''));
     downloadBlob(new Blob([out]), `${base}_수정.${ext}`);
@@ -1267,7 +1509,7 @@ async function exportAs(format: 'charx' | 'png' | 'json') {
   setStatus(`.${format} 변환 중...`);
   await new Promise((r) => setTimeout(r, 16));   // 상태줄이 먼저 그려지게(대형 카드 대비)
   try {
-    const json = applyLorebookToCard(parsed.card, lore.kind, exportEntries());
+    const json = applyLorebookToCard(parsed.card, lore.kind, exportEntries(), loreSettings);
     const base = safeName((chip.name || 'card').replace(/\.[^.]+$/, ''));
     let out: Uint8Array;
     let mime = 'application/octet-stream';
@@ -1303,10 +1545,14 @@ function exportCharacterBook() {
   downloadText(JSON.stringify(data, null, 2), exportBaseName() + '.character_book.json', 'application/json;charset=utf-8');
 }
 function exportNormalized() {
+  const el = effLore();
   const data = {
     source: chips.find((c) => c.id === currentId)?.name || '',
     kind: lore.kind,
     bookName: lore.bookName,
+    ...(el.scanDepth != null ? { scanDepth: el.scanDepth } : {}),
+    ...(el.tokenBudget != null ? { tokenBudget: el.tokenBudget } : {}),
+    ...(el.recursive ? { recursive: true } : {}),
     entries: effLore().entries.map((e: any) => ({
       ...e,
       displayName: displayName(e),
@@ -1436,7 +1682,7 @@ async function armKeys(lang: string, scope?: any[]) {
       skipKorean: false,   // 한국어 키도 대상(예: 한국어 키 → 일본어 무장)
       onProgress: (d: number, t: number) => { statusText = `활성화 키 번역 중 ${d}/${t}`; renderBody(); },
     });
-    let added = 0, armed = 0;
+    const additions: [string, string[]][] = [];
     res.blocks.forEach((text: any, i: number) => {
       const e = targets[i];
       if (text == null) return;
@@ -1444,8 +1690,13 @@ async function armKeys(lang: string, scope?: any[]) {
       (keyAdds[e.uid] || []).forEach((k: string) => have.add(k.toLowerCase()));
       const fresh = String(text).split(',').map((s) => s.trim()).filter(Boolean)
         .filter((k) => { const l = k.toLowerCase(); if (have.has(l)) return false; have.add(l); return true; });
-      if (fresh.length) { keyAdds[e.uid] = (keyAdds[e.uid] || []).concat(fresh); added += fresh.length; armed++; }
+      if (fresh.length) additions.push([e.uid, fresh]);
     });
+    let added = 0, armed = 0;
+    if (additions.length) {
+      pushUndo();
+      for (const [u, fresh] of additions) { keyAdds[u] = (keyAdds[u] || []).concat(fresh); added += fresh.length; armed++; }
+    }
     saveDraft();
     statusText = added
       ? `활성화 키 번역 추가 — ${armed}개 엔트리에 ${lang} 키 ${added}개 추가`
@@ -1483,7 +1734,7 @@ function openArmModal(scope?: any[]) {
   const acts = document.createElement('div');
   acts.className = 'reader-actions';
   acts.appendChild(button('무장 시작', () => { close(); armKeys(langSel.value, scoped || undefined); }, 'primary'));
-  if (armedNow) acts.appendChild(button(`추가 키 모두 지우기 (${armedNow}개)`, () => { keyAdds = {}; saveDraft(); close(); statusText = '추가 키를 모두 지웠어요.'; renderBody(); }));
+  if (armedNow) acts.appendChild(button(`추가 키 모두 지우기 (${armedNow}개)`, () => { pushUndo(); keyAdds = {}; saveDraft(); close(); statusText = '추가 키를 모두 지웠어요.'; renderBody(); }));
   body.appendChild(acts);
   panel.appendChild(body);
   ov.appendChild(panel);
@@ -1791,7 +2042,7 @@ function fieldRow(...fields: HTMLElement[]) {
 
 document.addEventListener('dragover', (e) => {
   e.preventDefault();
-  document.body.classList.add('dragging');
+  if (!draggingUid) document.body.classList.add('dragging');   // 내부 행 드래그는 파일 드롭 오버레이 제외
 });
 document.addEventListener('dragleave', (e) => {
   if (!(e as DragEvent).relatedTarget) document.body.classList.remove('dragging');
@@ -1799,8 +2050,18 @@ document.addEventListener('dragleave', (e) => {
 document.addEventListener('drop', (e) => {
   e.preventDefault();
   document.body.classList.remove('dragging');
+  if (draggingUid) { draggingUid = ''; clearDropMarks(); return; }   // 행 드래그가 목록 밖에 떨어짐 = 무시
   const fs = Array.from(((e as DragEvent).dataTransfer && (e as DragEvent).dataTransfer.files) || []);
   if (fs.length) addFiles(fs);
+});
+// Ctrl+Z / Ctrl+Shift+Z(또는 Ctrl+Y) — 입력칸 포커스 중엔 브라우저 기본 undo에 양보.
+document.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  const t: any = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  const k = e.key.toLowerCase();
+  if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+  else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
 });
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {

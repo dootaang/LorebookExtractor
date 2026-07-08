@@ -101,6 +101,19 @@ if (fs.existsSync(CHARX)) {
     assert.equal(p2.assets.length, p.assets.length);
     assert.ok(p2.assets.every((a) => a.found));
   });
+  ok('로어북 설정 쓰기: scan_depth·token_budget·recursive_scanning 반영 + CCv3 JSON 빌더', () => {
+    const { buildCharacterBook } = require('../lorebook/normalize.js');
+    const j2 = applyLorebookToCard(p.card, 'card', entries, { scanDepth: 7, tokenBudget: 1234, recursive: true });
+    const book = JSON.parse(j2).data.character_book;
+    assert.equal(book.scan_depth, 7);
+    assert.equal(book.token_budget, 1234);
+    assert.equal(book.recursive_scanning, true);
+    assert.equal(book.entries.length, lore.entries.length);   // 엔트리는 그대로
+    const cb = buildCharacterBook({ ...lore, scanDepth: 7, tokenBudget: 1234, recursive: true }, null, 'tr', null);
+    assert.equal(cb.data.scan_depth, 7);
+    assert.equal(cb.data.token_budget, 1234);
+    assert.equal(cb.data.recursive_scanning, true);
+  });
   ok('json 변환(encodeJson): data URI 인라인·로어북 반영', () => {
     const out = encodeJson({ ...p, card: JSON.parse(json) }, gb);
     const card = JSON.parse(Buffer.from(out).toString('utf8'));
